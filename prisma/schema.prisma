@@ -1,0 +1,146 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  // Keep the output path simple or default, but in new_app it says output = "../src/generated/prisma"
+  // We can just use the standard one
+}
+
+datasource db {
+  provider  = "postgresql"
+}
+
+// ────────────────────────────────────────────────────────────
+// RBAC + Revenue Models
+// ────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN   // Doctors / BSMS practitioners
+  USER    // Regular users
+}
+
+model User {
+  id           String        @id @default(uuid())
+  supabaseId   String        @unique          // Supabase auth.users.id
+  email        String        @unique
+  name         String?
+  role         Role          @default(USER)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sessions     ChatSession[]
+  chatLogs     ChatLog[]
+  queryUsages  QueryUsage[]
+}
+
+model QueryQuota {
+  id               String   @id @default(uuid())
+  role             Role     @unique
+  dailyQueryLimit  Int      @default(10)       // Queries per day
+  monthlyQueryLimit Int     @default(300)      // Queries per month
+  maxFileUploads   Int      @default(0)        // 0 = no upload access
+  updatedAt        DateTime @updatedAt
+}
+
+model QueryUsage {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime @default(now()) @db.Date  // Track by day
+  count     Int      @default(1)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+// ────────────────────────────────────────────────────────────
+// Existing models (now linked to User)
+// ────────────────────────────────────────────────────────────
+
+model ChatSession {
+  id        String     @id @default(uuid())
+  userId    String?
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  isDeleted Boolean    @default(false)
+  logs      ChatLog[]
+}
+
+model ChatLog {
+  id            String                @id @default(uuid())
+  sessionId     String?
+  session       ChatSession?          @relation(fields: [sessionId], references: [id])
+  userId        String?
+  user          User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  timestamp     DateTime              @default(now())
+  query         String
+  answer        String                @db.Text
+  durationMs    Int
+  retrievedDocs Json                  // Store retrieved documents and sources
+  triageData    Json                  // Store triage data (diagnosis, symptoms, etc.)
+  diagnostics   RetrievalDiagnostic[]
+}
+
+model IngestionJob {
+  id          String    @id @default(uuid())
+  fileName    String
+  fileType    String
+  status      String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  chunksCount Int       @default(0)
+  error       String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model DocumentMetadata {
+  id        String   @id @default(uuid())
+  sourceUrl String?
+  fileName  String
+  type      String
+  ingested  DateTime @default(now())
+  chunks    Int
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  fileName   String
+  chunkIndex Int
+  content    String   @db.Text
+  metadata   Json     // Store full metadata block
+  createdAt  DateTime @default(now())
+
+  @@index([fileName])
+}
+
+model RetrievalDiagnostic {
+  id              String   @id @default(uuid())
+  chatLogId       String?
+  chatLog         ChatLog? @relation(fields: [chatLogId], references: [id])
+  query           String
+  rewrittenQuery  String
+  latencyMs       Int
+  vectorScoreMin  Float
+  vectorScoreMax  Float
+  lexicalScoreMin Float
+  lexicalScoreMax Float
+  rrfScoreMin     Float
+  rrfScoreMax     Float
+  rerankScoreMin  Float
+  rerankScoreMax  Float
+  redundancyRatio Float
+  timestamp       DateTime @default(now())
+}
+
+model EvaluationRun {
+  id               String   @id @default(uuid())
+  timestamp        DateTime @default(now())
+  faithfulness     Float
+  answerRelevance  Float
+  contextPrecision Float
+  overallScore     Float
+  details          Json     // Array of individual test evaluations
+}
+

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import prisma from "@/lib/db";
+import prisma from "@/lib/server/db";
+import { resolveUserPlan } from "@/lib/billing/pricing-server";
+import { internalServerError } from "@/lib/server/security";
+import { getMonthlyCreditAdjustment } from "@/lib/billing/credits";
+import { ensureAppUser } from "@/lib/auth/user-sync";
 
-// GET /api/auth/me — returns current user profile with role and quota info
+// GET /api/auth/me — returns current user profile with role and credit balance info
 export async function GET() {
   try {
     const supabase = await createServerSupabaseClient();
@@ -14,29 +18,40 @@ export async function GET() {
       return NextResponse.json({ user: null }, { status: 200 });
     }
 
-    // Fetch Prisma user with role
-    let user = await prisma.user.findUnique({
-      where: { supabaseId: authUser.id },
-    });
+    const user = await ensureAppUser(authUser);
 
-    if (!user) {
-      // Auto-create if Supabase user exists but no Prisma record
-      user = await prisma.user.create({
-        data: {
-          supabaseId: authUser.id,
-          email: authUser.email!,
-          name: authUser.user_metadata?.name || null,
-          role: "USER",
-        },
-      });
+    if (!user.isActive) {
+      await supabase.auth.signOut();
+      return NextResponse.json({ error: "Account is inactive" }, { status: 403 });
     }
 
-    // Get quota for this role
-    const quota = await prisma.queryQuota.findUnique({
-      where: { role: user.role },
+    const plan = await resolveUserPlan(user.planSlug);
+    const creditAdjustment = await getMonthlyCreditAdjustment(user.id);
+    const monthlyCreditLimit = user.role === "SUPER_ADMIN"
+      ? 999999
+      : Math.max(0, plan.monthlyQueryLimit + creditAdjustment);
+    const subscription = await prisma.billingSubscription.findFirst({
+      where: {
+        userId: user.id,
+        status: { in: ["ACTIVE", "PENDING", "PAST_DUE"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        planSlug: true,
+        status: true,
+        interval: true,
+        currency: true,
+        amountMinor: true,
+        currentPeriodEnd: true,
+        provider: true,
+      },
+    }).catch((error: unknown) => {
+      console.warn("BillingSubscription table is unavailable; continuing without subscription status.", error);
+      return null;
     });
 
-    // Get today's usage
+    // Get today's credit usage. One chat submission currently consumes one credit.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -47,9 +62,12 @@ export async function GET() {
           date: today,
         },
       },
+    }).catch((error: unknown) => {
+      console.warn("Credit usage table is unavailable; continuing with zero daily usage.", error);
+      return null;
     });
 
-    // Get this month's usage
+    // Get this month's credit usage
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
     const monthlyUsage = await prisma.queryUsage.aggregate({
       where: {
@@ -57,6 +75,9 @@ export async function GET() {
         date: { gte: monthStart },
       },
       _sum: { count: true },
+    }).catch((error: unknown) => {
+      console.warn("Credit usage table is unavailable; continuing with zero monthly usage.", error);
+      return { _sum: { count: 0 } };
     });
 
     return NextResponse.json({
@@ -65,26 +86,31 @@ export async function GET() {
         email: user.email,
         name: user.name,
         role: user.role,
+        planSlug: user.planSlug,
+        planName: plan.name,
         isActive: user.isActive,
         createdAt: user.createdAt,
       },
-      quota: quota
-        ? {
-            dailyLimit: quota.dailyQueryLimit,
-            monthlyLimit: quota.monthlyQueryLimit,
-            maxFileUploads: quota.maxFileUploads,
-          }
-        : { dailyLimit: 10, monthlyLimit: 300, maxFileUploads: 0 },
+      credits: {
+        dailyLimit: user.role === "SUPER_ADMIN" ? 999999 : plan.dailyQueryLimit,
+        monthlyLimit: monthlyCreditLimit,
+        monthlyAdjustment: user.role === "SUPER_ADMIN" ? 0 : creditAdjustment,
+        todayUsed: usage?.count || 0,
+        monthlyUsed: monthlyUsage._sum.count || 0,
+        todayRemaining: user.role === "SUPER_ADMIN" ? 999999 : Math.max(0, plan.dailyQueryLimit - (usage?.count || 0)),
+        monthlyRemaining: user.role === "SUPER_ADMIN" ? 999999 : Math.max(0, monthlyCreditLimit - (monthlyUsage._sum.count || 0)),
+      },
+      quota: {
+        dailyLimit: user.role === "SUPER_ADMIN" ? 999999 : plan.dailyQueryLimit,
+        monthlyLimit: monthlyCreditLimit,
+      },
       usage: {
         todayCount: usage?.count || 0,
         monthlyCount: monthlyUsage._sum.count || 0,
       },
+      subscription,
     });
-  } catch (e: any) {
-    console.error("Auth/me error:", e);
-    return NextResponse.json(
-      { error: e.message || "Internal server error" },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return internalServerError("auth.me", error, "Unable to load profile");
   }
 }

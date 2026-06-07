@@ -2,8 +2,10 @@
 
 import { useState, useRef } from "react";
 import { motion, AnimatePresence, useInView } from "framer-motion";
-import { Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import { FAQS, EXPO_OUT } from "@/lib/constants";
+
+const MOTION_EASE: [number, number, number, number] = [...EXPO_OUT];
 
 export default function FAQSection() {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
@@ -23,7 +25,7 @@ export default function FAQSection() {
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             animate={inView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.7, ease: EXPO_OUT as any }}
+            transition={{ duration: 0.7, ease: MOTION_EASE }}
             className="md:sticky md:top-[120px] md:self-start"
           >
             <span
@@ -63,7 +65,7 @@ export default function FAQSection() {
                 transition={{
                   duration: 0.5,
                   delay: 0.1 + i * 0.08,
-                  ease: EXPO_OUT as any,
+                  ease: MOTION_EASE,
                 }}
                 className="border-b"
                 style={{ borderColor: "var(--border-subtle)" }}
@@ -109,7 +111,7 @@ export default function FAQSection() {
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3, ease: EXPO_OUT as any }}
+                      transition={{ duration: 0.3, ease: MOTION_EASE }}
                       className="overflow-hidden"
                     >
                       <div

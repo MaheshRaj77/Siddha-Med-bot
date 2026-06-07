@@ -1,45 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import prisma from "@/lib/db";
+import { z } from "zod";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { enforceSameOrigin, getClientIp, internalServerError, logServerError, parseJson } from "@/lib/server/security";
+import { ensureAppUser } from "@/lib/auth/user-sync";
+
+const loginSchema = z.object({
+  email: z.string().email().trim().max(320),
+  password: z.string().min(1).max(256),
+}).strict();
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, password } = await req.json();
+    const originError = enforceSameOrigin(req);
+    if (originError) return originError;
 
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: "Email and password are required" },
-        { status: 400 }
-      );
-    }
+    const rateLimitError = await enforceRateLimit("auth-login", getClientIp(req));
+    if (rateLimitError) return rateLimitError;
+
+    const parsed = await parseJson(req, loginSchema, 4 * 1024);
+    if (parsed.response) return parsed.response;
+    const { email, password } = parsed.data;
+    const normalizedEmail = email.toLowerCase();
+
+    const emailRateLimitError = await enforceRateLimit("auth-login", `email:${normalizedEmail}`);
+    if (emailRateLimitError) return emailRateLimitError;
 
     const supabase = await createServerSupabaseClient();
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: normalizedEmail,
       password,
     });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 401 });
+      const message = error.message.toLowerCase().includes("confirm")
+        ? "Please verify your email before signing in."
+        : "Invalid email or password";
+      return NextResponse.json({ error: message }, { status: 401 });
     }
 
-    // Get or create the corresponding Prisma user
-    let user = await prisma.user.findUnique({
-      where: { supabaseId: data.user.id },
-    });
-
-    if (!user) {
-      // Edge case: Supabase user exists but no Prisma record
-      user = await prisma.user.create({
-        data: {
-          supabaseId: data.user.id,
-          email: data.user.email!,
-          name: data.user.user_metadata?.name || null,
-          role: "USER",
-        },
-      });
-    }
+    const user = await ensureAppUser(data.user);
 
     if (!user.isActive) {
       await supabase.auth.signOut();
@@ -58,24 +59,23 @@ export async function POST(req: NextRequest) {
         role: user.role,
       },
     });
-  } catch (e: any) {
-    console.error("Login error:", e);
-    return NextResponse.json(
-      { error: e.message || "Internal server error" },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return internalServerError("auth.login", error, "Unable to sign in");
   }
 }
 
 export async function DELETE(req: NextRequest) {
   try {
+    const originError = enforceSameOrigin(req);
+    if (originError) return originError;
+
     const supabase = await createServerSupabaseClient();
     await supabase.auth.signOut();
     return NextResponse.json({ success: true, message: "Logged out successfully" });
-  } catch (e: any) {
-    console.error("Logout error:", e);
+  } catch (error: unknown) {
+    logServerError("auth.logout", error);
     return NextResponse.json(
-      { error: e.message || "Logout failed" },
+      { error: "Logout failed" },
       { status: 500 }
     );
   }

@@ -4,6 +4,8 @@ import { useRef } from "react";
 import { motion, useInView } from "framer-motion";
 import { FEATURES, EXPO_OUT } from "@/lib/constants";
 
+const MOTION_EASE: [number, number, number, number] = [...EXPO_OUT];
+
 /* ── Custom SVG icons ─────────────────────────────────────── */
 function InferenceIcon() {
   return (
@@ -90,7 +92,7 @@ function FeatureCard({
       transition={{
         duration: 0.7,
         delay: index * 0.1,
-        ease: EXPO_OUT as any,
+        ease: MOTION_EASE,
       }}
       className="relative overflow-hidden group flex flex-col transition-all duration-300"
       style={{
@@ -177,7 +179,7 @@ export default function FeatureCards() {
         <motion.div
           initial={{ opacity: 0, y: 40 }}
           animate={inView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.7, ease: EXPO_OUT as any }}
+          transition={{ duration: 0.7, ease: MOTION_EASE }}
           className="text-center mb-20"
         >
           <span

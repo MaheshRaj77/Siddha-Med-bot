@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
-import prisma from "@/lib/db";
+import prisma from "@/lib/server/db";
+import { authorize, enforceSameOrigin, internalServerError, uuidSchema } from "@/lib/server/security";
 
 // GET /api/chat/sessions — list all chat sessions of the logged-in user
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-
-    if (!authUser) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
-
-    const dbUser = await prisma.user.findUnique({
-      where: { supabaseId: authUser.id },
-    });
-
-    if (!dbUser) {
-      return NextResponse.json({ error: "User profile not found" }, { status: 401 });
-    }
+    const auth = await authorize();
+    if (auth.response) return auth.response;
+    const dbUser = auth.user;
 
     // Fetch sessions belonging to this user that are not soft-deleted
     const sessions = await prisma.chatSession.findMany({
@@ -37,10 +26,13 @@ export async function GET(req: NextRequest) {
 
     // Format sessions to include a calculated title
     const formattedSessions = sessions.map((s) => {
-      const firstLog = s.logs[0];
-      const rawTitle = firstLog?.query || "New Conversation";
-      // Truncate title cleanly
-      const title = rawTitle.length > 32 ? `${rawTitle.slice(0, 32)}...` : rawTitle;
+      let title = s.title;
+      // Fallback for old sessions without a title
+      if (!title) {
+        const firstLog = s.logs[0];
+        const rawTitle = firstLog?.query || "New Conversation";
+        title = rawTitle.length > 32 ? `${rawTitle.slice(0, 32)}...` : rawTitle;
+      }
       
       return {
         id: s.id,
@@ -51,34 +43,25 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, sessions: formattedSessions });
-  } catch (error: any) {
-    console.error("Failed to list sessions:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return internalServerError("chat.sessions.list", error);
   }
 }
 
 // DELETE /api/chat/sessions — delete a session and all its associated logs
 export async function DELETE(req: NextRequest) {
   try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const originError = enforceSameOrigin(req);
+    if (originError) return originError;
 
-    if (!authUser) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
-
-    const dbUser = await prisma.user.findUnique({
-      where: { supabaseId: authUser.id },
-    });
-
-    if (!dbUser) {
-      return NextResponse.json({ error: "User profile not found" }, { status: 401 });
-    }
+    const auth = await authorize();
+    if (auth.response) return auth.response;
+    const dbUser = auth.user;
 
     const { searchParams } = new URL(req.url);
     const sessionId = searchParams.get("id");
 
-    if (!sessionId) {
+    if (!sessionId || !uuidSchema.safeParse(sessionId).success) {
       return NextResponse.json({ error: "Session ID required" }, { status: 400 });
     }
 
@@ -99,8 +82,7 @@ export async function DELETE(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, message: "Session successfully deleted from view" });
-  } catch (error: any) {
-    console.error("Failed to delete session:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return internalServerError("chat.sessions.delete", error);
   }
 }

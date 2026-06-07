@@ -21,27 +21,45 @@ enum Role {
   USER    // Regular users
 }
 
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
 model User {
   id           String        @id @default(uuid())
   supabaseId   String        @unique          // Supabase auth.users.id
   email        String        @unique
   name         String?
   role         Role          @default(USER)
+  planSlug     String        @default("starter")
   isActive     Boolean       @default(true)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sessions     ChatSession[]
   chatLogs     ChatLog[]
   queryUsages  QueryUsage[]
-}
-
-model QueryQuota {
-  id               String   @id @default(uuid())
-  role             Role     @unique
-  dailyQueryLimit  Int      @default(10)       // Queries per day
-  monthlyQueryLimit Int     @default(300)      // Queries per month
-  maxFileUploads   Int      @default(0)        // 0 = no upload access
-  updatedAt        DateTime @updatedAt
+  subscriptions BillingSubscription[]
+  payments      PaymentTransaction[]
+  securityAuditLogs SecurityAuditLog[]
+  creditAdjustments CreditAdjustment[] @relation("CreditAdjustmentUser")
+  creditAdjustmentsMade CreditAdjustment[] @relation("CreditAdjustmentActor")
+  chatCostMetrics ChatCostMetric[]
 }
 
 model QueryUsage {
@@ -63,10 +81,13 @@ model ChatSession {
   id        String     @id @default(uuid())
   userId    String?
   user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  title     String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   isDeleted Boolean    @default(false)
   logs      ChatLog[]
+
+  @@index([userId])
 }
 
 model ChatLog {
@@ -82,6 +103,11 @@ model ChatLog {
   retrievedDocs Json                  // Store retrieved documents and sources
   triageData    Json                  // Store triage data (diagnosis, symptoms, etc.)
   diagnostics   RetrievalDiagnostic[]
+  costMetric    ChatCostMetric?
+
+  @@index([userId, timestamp])
+  @@index([sessionId, timestamp])
+  @@index([timestamp])
 }
 
 model IngestionJob {
@@ -96,23 +122,40 @@ model IngestionJob {
 }
 
 model DocumentMetadata {
-  id        String   @id @default(uuid())
-  sourceUrl String?
-  fileName  String
-  type      String
-  ingested  DateTime @default(now())
-  chunks    Int
+  id           String   @id @default(uuid())
+  sourceUrl    String?
+  fileName     String   @unique
+  type         String
+  documentHash String?
+  version      Int      @default(1)
+  isActive     Boolean  @default(true)
+  deactivatedAt DateTime?
+  ingested     DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  chunks       Int
+
+  @@index([isActive])
+  @@index([documentHash])
 }
 
 model DocumentChunk {
-  id         String   @id @default(uuid())
-  fileName   String
-  chunkIndex Int
-  content    String   @db.Text
-  metadata   Json     // Store full metadata block
-  createdAt  DateTime @default(now())
+  id           String   @id @default(uuid())
+  fileName     String
+  chunkIndex   Int
+  content      String   @db.Text
+  metadata     Json     // Store full metadata block
+  documentHash String?
+  chunkHash    String?
+  tokenCount   Int?
+  pageNumber   Int?
+  sectionTitle String?
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
 
   @@index([fileName])
+  @@index([documentHash])
+  @@index([chunkHash])
+  @@unique([fileName, chunkIndex])
 }
 
 model RetrievalDiagnostic {
@@ -132,6 +175,56 @@ model RetrievalDiagnostic {
   rerankScoreMax  Float
   redundancyRatio Float
   timestamp       DateTime @default(now())
+
+  @@index([chatLogId])
+}
+
+model SecurityAuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  details   Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model CreditAdjustment {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation("CreditAdjustmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  actorId     String?
+  actor       User?    @relation("CreditAdjustmentActor", fields: [actorId], references: [id], onDelete: SetNull)
+  amount      Int
+  reason      String   @db.Text
+  periodStart DateTime @db.Date
+  createdAt   DateTime @default(now())
+
+  @@index([userId, periodStart])
+  @@index([actorId, createdAt])
+}
+
+model ChatCostMetric {
+  id                 String   @id @default(uuid())
+  chatLogId          String   @unique
+  chatLog            ChatLog  @relation(fields: [chatLogId], references: [id], onDelete: Cascade)
+  userId             String?
+  user               User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  planSlug           String?
+  model              String
+  promptTokens       Int      @default(0)
+  completionTokens   Int      @default(0)
+  totalTokens        Int      @default(0)
+  estimatedCostMinor Float    @default(0)
+  sourceCount        Int      @default(0)
+  cachedRetrieval    Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([planSlug, createdAt])
+  @@index([createdAt])
 }
 
 model EvaluationRun {
@@ -144,3 +237,116 @@ model EvaluationRun {
   details          Json     // Array of individual test evaluations
 }
 
+model AgentSettings {
+  id               String   @id @default("default")
+  agentName        String   @default("Siddha MedBot")
+  agentSubtitle    String   @default("Medical Research Assistant")
+  profileImageUrl  String   @default("/bot-profile.png")
+  welcomeMessage   String   @db.Text
+  inputPlaceholder String   @default("Ask anything about Siddha medicine")
+  disclaimer       String   @db.Text
+  followUpQuestionsEnabled Boolean @default(true)
+  updatedAt        DateTime @updatedAt
+}
+
+model PricingPlan {
+  id                String   @id @default(uuid())
+  slug              String   @unique
+  name              String
+  description       String
+  currency          String   @default("INR")
+  monthlyPriceMinor Int      @default(0)
+  yearlyPriceMinor  Int      @default(0)
+  dailyQueryLimit   Int      @default(10)
+  monthlyQueryLimit Int      @default(300)
+  maxFileUploads    Int      @default(0)
+  features          Json
+  checkoutUrl       String?
+  isFree            Boolean  @default(false)
+  isPopular         Boolean  @default(false)
+  isPublished       Boolean  @default(true)
+  displayOrder      Int      @default(0)
+  updatedAt         DateTime @updatedAt
+
+  subscriptions     BillingSubscription[]
+  payments          PaymentTransaction[]
+
+  @@index([isPublished, displayOrder])
+}
+
+model PromoCode {
+  id                  String   @id @default(uuid())
+  code                String   @unique
+  description         String
+  discountPercent     Int
+  applicablePlanSlugs Json
+  maxUses             Int?
+  usedCount           Int      @default(0)
+  expiresAt           DateTime?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  subscriptions        BillingSubscription[]
+  payments             PaymentTransaction[]
+}
+
+model BillingSubscription {
+  id                   String             @id @default(uuid())
+  userId               String
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planSlug             String
+  plan                 PricingPlan        @relation(fields: [planSlug], references: [slug], onUpdate: Cascade)
+  status               SubscriptionStatus @default(PENDING)
+  interval             BillingInterval    @default(MONTHLY)
+  currency             String             @default("INR")
+  amountMinor          Int
+  discountPercent      Int                @default(0)
+  promoCodeId          String?
+  promoCode            PromoCode?         @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  provider             String             @default("manual")
+  providerCheckoutUrl  String?
+  providerReference    String?
+  startsAt             DateTime?
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  canceledAt           DateTime?
+  metadata             Json               @default("{}")
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  payments             PaymentTransaction[]
+
+  @@index([userId, status])
+  @@index([planSlug, status])
+  @@index([promoCodeId])
+}
+
+model PaymentTransaction {
+  id                   String              @id @default(uuid())
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId       String?
+  subscription         BillingSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  planSlug             String
+  plan                 PricingPlan         @relation(fields: [planSlug], references: [slug], onUpdate: Cascade)
+  promoCodeId          String?
+  promoCode            PromoCode?          @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  status               PaymentStatus       @default(PENDING)
+  interval             BillingInterval     @default(MONTHLY)
+  currency             String              @default("INR")
+  amountMinor          Int
+  originalAmountMinor  Int
+  discountPercent      Int                 @default(0)
+  provider             String              @default("manual")
+  providerReference    String?
+  checkoutUrl          String?
+  metadata             Json                @default("{}")
+  paidAt               DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@index([userId, status])
+  @@index([subscriptionId])
+  @@index([planSlug, status])
+  @@index([promoCodeId])
+}

@@ -1,145 +1,44 @@
 "use client";
 
-import { useRef } from "react";
 import Link from "next/link";
-import { motion, useInView } from "framer-motion";
-import { ArrowRight } from "lucide-react";
-import { EXPO_OUT } from "@/lib/constants";
-
-/* ── Botanical Leaf SVG ───────────────────────────────────── */
-function LeafMotif() {
-  return (
-    <svg
-      width="64"
-      height="64"
-      viewBox="0 0 64 64"
-      fill="none"
-      className="animate-spin-slow mx-auto mb-8"
-      aria-hidden="true"
-    >
-      <path
-        d="M32 4C32 4 48 16 48 32C48 48 32 60 32 60C32 60 16 48 16 32C16 16 32 4 32 4Z"
-        stroke="var(--gold-dim)"
-        strokeWidth="0.8"
-        fill="none"
-      />
-      {/* Center vein */}
-      <line x1="32" y1="10" x2="32" y2="54" stroke="var(--gold-dim)" strokeWidth="0.5" />
-      {/* Side veins */}
-      <line x1="32" y1="20" x2="24" y2="16" stroke="var(--gold-dim)" strokeWidth="0.4" />
-      <line x1="32" y1="20" x2="40" y2="16" stroke="var(--gold-dim)" strokeWidth="0.4" />
-      <line x1="32" y1="30" x2="22" y2="28" stroke="var(--gold-dim)" strokeWidth="0.4" />
-      <line x1="32" y1="30" x2="42" y2="28" stroke="var(--gold-dim)" strokeWidth="0.4" />
-      <line x1="32" y1="40" x2="24" y2="42" stroke="var(--gold-dim)" strokeWidth="0.4" />
-      <line x1="32" y1="40" x2="40" y2="42" stroke="var(--gold-dim)" strokeWidth="0.4" />
-    </svg>
-  );
-}
+import { motion } from "framer-motion";
+import { ArrowRight, Leaf, Sparkles } from "lucide-react";
 
 export default function CTASection() {
-  const ref = useRef<HTMLElement>(null);
-  const inView = useInView(ref, { once: true, amount: 0.3 });
-
   return (
-    <section
-      ref={ref}
-      className="relative z-10 py-[100px] md:py-[140px] overflow-hidden"
-      style={{ background: "var(--bg-void)" }}
-    >
-      {/* Massive ambient halo */}
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          width: 800,
-          height: 800,
-          borderRadius: "50%",
-          background: "var(--gold-glow)",
-          filter: "blur(200px)",
-          opacity: 0.4,
-        }}
-      />
-
+    <section className="bg-[#F7FAFC] px-5 pb-12 sm:px-8 sm:pb-16 lg:px-12 lg:pb-20">
       <motion.div
-        initial={{ opacity: 0, y: 40 }}
-        animate={inView ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.7, ease: EXPO_OUT as any }}
-        className="relative z-10 mx-auto max-w-[720px] px-6 text-center"
+        initial={{ opacity: 0, y: 24 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.35 }}
+        transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
+        className="relative mx-auto flex max-w-[1344px] flex-col items-center justify-between gap-8 overflow-hidden rounded-[32px] bg-[linear-gradient(135deg,#0A6E5B,#083E52)] px-7 py-10 shadow-[0_26px_60px_rgba(8,62,82,0.22)] sm:px-10 lg:flex-row lg:px-14 lg:py-12"
       >
-        <LeafMotif />
+        <div className="absolute -right-12 -top-16 h-60 w-60 rounded-full border border-white/10" />
+        <div className="absolute -right-4 bottom-0 opacity-20">
+          <Leaf className="h-44 w-44 rotate-[-24deg] text-emerald-200" />
+        </div>
+        <div className="absolute left-1/2 top-0 h-40 w-72 -translate-x-1/2 rounded-full bg-[#12C48B]/20 blur-3xl" />
 
-        {/* Eyebrow */}
-        <span
-          className="text-[9px] font-semibold tracking-[0.25em] uppercase block mb-6"
-          style={{ color: "var(--gold-primary)" }}
-        >
-          BEGIN YOUR RESEARCH SESSION
-        </span>
-
-        {/* Heading */}
-        <h2 className="mb-8">
-          <span
-            className="block text-[36px] md:text-[48px] font-black tracking-[-0.04em] leading-[1.05]"
-            style={{ color: "var(--text-primary)" }}
-          >
-            The synthesis of ancient
+        <div className="relative z-10 text-center lg:text-left">
+          <span className="inline-flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.2em] text-emerald-200">
+            <Sparkles className="h-4 w-4" />
+            Begin your research journey
           </span>
-          <span
-            className="block text-[36px] md:text-[48px] font-black tracking-[-0.04em] leading-[1.05]"
-            style={{
-              WebkitTextStroke: "1px rgba(201,168,76,0.6)",
-              color: "transparent",
-            }}
-          >
-            medicine starts here.
-          </span>
-        </h2>
+          <h2 className="mt-3 text-3xl font-black tracking-[-0.05em] text-white sm:text-5xl">
+            Start Your Journey with
+            <br />
+            Siddha MedBot
+          </h2>
+          <p className="mt-3 text-sm font-medium text-emerald-50/80">Try it free. No credit card required.</p>
+        </div>
 
-        {/* Body */}
-        <p
-          className="text-[14px] font-light leading-[1.8] max-w-[520px] mx-auto"
-          style={{ color: "var(--text-secondary)" }}
+        <Link
+          href="/signup"
+          className="relative z-10 inline-flex w-full items-center justify-center gap-3 rounded-full bg-gradient-to-r from-[#12C48B] to-[#04A970] px-8 py-4 text-sm font-extrabold text-white shadow-[0_0_36px_rgba(18,196,139,0.38)] transition hover:-translate-y-1 hover:shadow-[0_0_52px_rgba(18,196,139,0.54)] sm:w-auto sm:min-w-[230px]"
         >
-          MedBot ingests your documents, reranks your retrieval, and delivers
-          verified clinical synthesis — all in under 120ms.
-        </p>
-
-        {/* CTA Button */}
-        <motion.div className="mt-12" whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.98 }}>
-          <Link
-            href="/chat"
-            className="inline-flex items-center gap-3 text-[14px] font-bold tracking-[0.1em] uppercase transition-all duration-250"
-            style={{
-              background: "var(--gold-primary)",
-              color: "#020202",
-              padding: "20px 56px",
-              borderRadius: 0,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--gold-bright)";
-              e.currentTarget.style.boxShadow =
-                "0 0 60px rgba(201,168,76,0.4), 0 0 120px rgba(201,168,76,0.15)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "var(--gold-primary)";
-              e.currentTarget.style.boxShadow = "none";
-            }}
-            aria-label="Enter Dashboard Workspace"
-          >
-            Enter Dashboard Workspace
-            <ArrowRight size={16} />
-          </Link>
-        </motion.div>
-
-        {/* Below button text */}
-        <p
-          className="mt-6 text-[10px] font-normal tracking-[0.06em]"
-          style={{ color: "var(--text-tertiary)" }}
-        >
-          No setup required · Instant document ingestion · BSMS clinical compliant
-        </p>
+          Get Started Free <ArrowRight className="h-4 w-4" />
+        </Link>
       </motion.div>
     </section>
   );

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect, JSX } from "react";
+import { useState, useRef, useEffect, useDeferredValue, useCallback, JSX } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, UploadCloud, Link as LinkIcon, FileText, Loader2, Bot, User, Trash2, Sparkles, CheckCircle2, Shield, Activity, BarChart2, Check, Clock, ChevronDown, ChevronUp, Database, LogOut } from "lucide-react";
+import { Send, FileText, Loader2, Trash2, Sparkles, CheckCircle2, Shield, Activity, BarChart2, Clock, ChevronDown, ChevronUp, LogOut, Menu, X, Search, SquarePen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Brain, Database, AlertTriangle } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ProductBrand, ThemeToggle, useProductTheme } from "@/components/product/ProductTheme";
 
 // ── Simple Markdown Renderer ───────────────────────────────────────────
 function RenderMarkdown({ text }: { text: string }) {
@@ -185,42 +187,78 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
   );
 }
 
-// ── Interactive Symptom Checklist ────────────────────────────────────────
-function SymptomChecklist({ symptoms, onSymptomSubmit }: { symptoms: string[], onSymptomSubmit: (selected: string[]) => void }) {
-  const [selected, setSelected] = useState<string[]>([]);
+// ── Interactive Clarification Reply ─────────────────────────────────────
+function ClarificationReply({ questions, onSubmit }: { questions: string[], onSubmit: (details: string) => void }) {
+  const [answers, setAnswers] = useState<Record<number, string>>({});
   const [submitted, setSubmitted] = useState(false);
+  const answeredCount = questions.filter((_, index) => answers[index]?.trim()).length;
+  const canSubmit = answeredCount > 0;
 
-  const toggle = (s: string) => {
-    setSelected(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+  const updateAnswer = (index: number, value: string) => {
+    setAnswers((current) => ({ ...current, [index]: value }));
+  };
+
+  const markUnsure = (index: number) => {
+    updateAnswer(index, "Not sure");
+  };
+
+  const submitAnswers = () => {
+    const formattedAnswers = questions
+      .map((question, index) => {
+        const answer = answers[index]?.trim() || "Not answered";
+        return `${index + 1}. ${question}\nAnswer: ${answer}`;
+      })
+      .join("\n\n");
+
+    setSubmitted(true);
+    onSubmit(formattedAnswers);
   };
 
   if (submitted) {
-    return <div className="mt-4 text-sm text-emerald-400 italic bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20 inline-block font-medium">Follow-up symptoms submitted ✅</div>;
+    return <div className="mt-4 inline-block rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-sm font-medium italic text-emerald-400">Additional details submitted</div>;
   }
 
   return (
-    <div className="mt-4 space-y-3 bg-white/5 p-4 rounded-xl border border-white/10 shadow-lg">
-      <p className="text-sm font-medium text-white flex items-center gap-1.5">
+    <div className="mt-4 space-y-3 rounded-xl border border-white/10 bg-white/5 p-4 shadow-lg">
+      <p className="flex items-center gap-1.5 text-sm font-medium text-white">
         <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
-        Do you have any of these additional symptoms?
+        Please answer these follow-up questions
       </p>
-      <div className="flex flex-wrap gap-2">
-        {symptoms.map(s => (
-          <label key={s} className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-white/5 cursor-pointer hover:bg-white/10 transition-all select-none">
-            <input type="checkbox" className="accent-emerald-500 w-4 h-4 rounded" checked={selected.includes(s)} onChange={() => toggle(s)} />
-            <span className="text-xs text-neutral-200">{s}</span>
-          </label>
+      <div className="space-y-3">
+        {questions.map((question, index) => (
+          <div key={`${question}-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <label className="block">
+              <span className="mb-2 block text-xs font-semibold leading-relaxed text-neutral-200">
+                {index + 1}. {question}
+              </span>
+              <textarea
+                value={answers[index] || ""}
+                onChange={(event) => updateAnswer(index, event.target.value)}
+                placeholder="Type your answer for this question"
+                rows={2}
+                className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs leading-relaxed text-neutral-200 outline-none placeholder:text-neutral-600 focus:border-emerald-500/40"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => markUnsure(index)}
+              className="mt-2 rounded-md border border-white/10 px-2.5 py-1 text-[11px] font-semibold text-neutral-400 transition hover:border-emerald-500/30 hover:text-emerald-300"
+            >
+              I am not sure
+            </button>
+          </div>
         ))}
-        <label className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-white/5 cursor-pointer hover:bg-white/10 transition-all select-none">
-          <input type="checkbox" className="accent-emerald-500 w-4 h-4 rounded" checked={selected.includes("None of the above")} onChange={() => setSelected(["None of the above"])} />
-          <span className="text-xs text-neutral-200">None of the above</span>
-        </label>
       </div>
-      <button 
-        onClick={() => { setSubmitted(true); onSymptomSubmit(selected.length > 0 ? selected : ["None"]); }}
-        className="mt-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-black text-xs font-bold px-4 py-2 rounded-lg transition-all shadow-md active:scale-95"
+      <p className="text-[11px] text-neutral-500">
+        Answer what you know. You can mark any question as not sure.
+      </p>
+      <button
+        type="button"
+        disabled={!canSubmit}
+        onClick={submitAnswers}
+        className="mt-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2 text-xs font-bold text-black shadow-md transition-all hover:from-emerald-600 hover:to-teal-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        Submit Answers
+        Continue with {answeredCount} answer{answeredCount === 1 ? "" : "s"}
       </button>
     </div>
   );
@@ -229,66 +267,222 @@ function SymptomChecklist({ symptoms, onSymptomSubmit }: { symptoms: string[], o
 // ── Progressive Agent Steps Progress Logger ───────────────────────────
 interface StepStates {
   medicalSafety: "pending" | "active" | "completed";
+  clarification: "pending" | "active" | "completed";
   retrieval: "pending" | "active" | "completed";
   reranking: "pending" | "active" | "completed";
   generator: "pending" | "active" | "completed";
   verification: "pending" | "active" | "completed";
 }
 
-function ProgressiveAgentLogger({ steps }: { steps: StepStates }) {
-  const stepsConfig = [
-    { key: "medicalSafety", label: "Medical Safety Triage Check", desc: "Verifying health relevance & domain boundaries" },
-    { key: "retrieval", label: "Hybrid Information Retrieval", desc: "BM25 Keyword + Semantic Vector store querying" },
-    { key: "reranking", label: "Cohere Context Reranking", desc: "Selecting top most relevant documents & sorting" },
-    { key: "generator", label: "Medical Response Synthesis", desc: "Synthesizing answer using NVIDIA Llama-3.3-70B" },
-    { key: "verification", label: "Guardrails & Hallucination Check", desc: "Cross-checking generated recommendations with literature" },
-  ];
+type StepConfig = {
+  key: keyof StepStates;
+  label: string;
+  desc: string;
+  detail: string;
+  icon: JSX.Element;
+};
+
+const agentStepConfigs: StepConfig[] = [
+  {
+    key: "medicalSafety",
+    label: "Medical Safety Triage",
+    desc: "Checking whether this belongs in the medical/Siddha lane",
+    detail: "Domain classifier",
+    icon: <Shield className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "clarification",
+    label: "Case Detail Check",
+    desc: "Deciding if the question needs follow-up details first",
+    detail: "Context sufficiency",
+    icon: <MessageCircleIcon />,
+  },
+  {
+    key: "retrieval",
+    label: "Active Knowledge Retrieval",
+    desc: "Searching active Postgres chunks with keyword, synonym, and vector signals",
+    detail: "FTS + semantic recall",
+    icon: <Database className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "reranking",
+    label: "Evidence Ranking",
+    desc: "Promoting the most relevant Siddha records and source rows",
+    detail: "Top evidence selection",
+    icon: <BarChart2 className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "generator",
+    label: "Grounded Answer Draft",
+    desc: "Writing only from retrieved active knowledge",
+    detail: "Llama synthesis",
+    icon: <Brain className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "verification",
+    label: "Grounding Verification",
+    desc: "Checking the answer for unsupported medical claims",
+    detail: "Safety guardrail",
+    icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+  },
+];
+
+function MessageCircleIcon() {
+  return <Activity className="h-3.5 w-3.5" />;
+}
+
+function ProgressiveAgentLogger({ steps, elapsedMs }: { steps: StepStates; elapsedMs: number }) {
+  const completedCount = agentStepConfigs.filter((item) => steps[item.key] === "completed").length;
+  const activeStep = agentStepConfigs.find((item) => steps[item.key] === "active");
+  const activeIndex = activeStep ? agentStepConfigs.findIndex((item) => item.key === activeStep.key) : completedCount;
+  const progress = Math.min(
+    96,
+    Math.max(8, ((completedCount + (activeStep ? 0.55 : 0.12)) / agentStepConfigs.length) * 100)
+  );
 
   return (
-    <div className="bg-white/5 border border-white/10 rounded-xl p-4 my-4 space-y-3.5 shadow-xl backdrop-blur-md">
-      <div className="flex items-center gap-2 border-b border-white/5 pb-2">
-        <Activity className="w-4 h-4 text-emerald-400 animate-spin" />
-        <span className="text-xs font-bold uppercase tracking-wider text-neutral-300">Active RAG Engine Execution</span>
+    <div className="my-4 mx-auto max-w-lg overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] shadow-md shadow-[var(--app-shadow)] backdrop-blur-xl p-3 flex items-center gap-3.5 transition-all duration-300">
+      {/* Dynamic Pulsing Circle Loader */}
+      <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--app-soft)] text-[#0B8B73]">
+        <motion.span
+          className="absolute inset-0 rounded-xl bg-emerald-500/10 blur-[2px]"
+          animate={{ scale: [0.95, 1.15, 0.95], opacity: [0.5, 0.9, 0.5] }}
+          transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+        />
+        <Loader2 className="h-5 w-5 animate-spin text-[#0B8B73] relative" />
       </div>
-      <div className="space-y-3">
-        {stepsConfig.map((item) => {
-          const status = steps[item.key as keyof StepStates] || "pending";
-          return (
-            <div key={item.key} className="flex items-start gap-3">
-              <div className="mt-1 shrink-0">
-                {status === "completed" && (
-                  <div className="w-4 h-4 rounded-full bg-emerald-500/20 border border-emerald-500 flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5 text-emerald-400" />
-                  </div>
-                )}
-                {status === "active" && (
-                  <div className="w-4 h-4 rounded-full border border-emerald-400 flex items-center justify-center relative">
-                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping absolute" />
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  </div>
-                )}
-                {status === "pending" && (
-                  <div className="w-4 h-4 rounded-full border border-white/15 bg-white/5" />
-                )}
-              </div>
-              <div>
-                <p className={`text-xs font-semibold ${status === "active" ? "text-emerald-400" : status === "completed" ? "text-neutral-200" : "text-neutral-500"}`}>
-                  {item.label}
-                </p>
-                {status === "active" && (
-                  <p className="text-[10px] text-emerald-400/80 leading-normal animate-pulse">{item.desc}</p>
-                )}
-              </div>
-            </div>
-          );
-        })}
+
+      {/* Primary and secondary status detail */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-[13px] font-bold text-[var(--app-text)] leading-none truncate">
+            {activeStep ? activeStep.label : "Initializing..."}
+          </p>
+          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--app-soft)] text-[#0B8B73] leading-none shrink-0 uppercase tracking-wider">
+            Stage {activeIndex + 1}/6
+          </span>
+        </div>
+        <p className="text-[11px] text-[var(--app-muted)] mt-1.5 truncate leading-none">
+          {activeStep ? activeStep.desc : "Preparing active knowledge channels"}
+        </p>
+      </div>
+
+      {/* Elapsed time & mini progress bar */}
+      <div className="flex flex-col items-end gap-1.5 shrink-0 pl-1">
+        <div className="flex items-center gap-1 text-[11px] font-semibold text-[var(--app-muted)]">
+          <Clock className="h-3.5 w-3.5 text-emerald-500" />
+          <span>{formatAgentElapsed(elapsedMs)}</span>
+        </div>
+        <div className="w-14 h-1 rounded-full bg-[var(--app-soft)] overflow-hidden">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.3 }}
+            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-[#0B8B73]"
+          />
+        </div>
       </div>
     </div>
   );
 }
 
+function formatAgentElapsed(elapsedMs: number) {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 // ── Enterprise Retrieval Diagnostics Panel ────────────────────────────
-function DiagnosticsInspector({ diagnostics }: { diagnostics: any }) {
+type DiagnosticsData = {
+  latencyMs?: number | null;
+  rrfScoreMax?: number | null;
+  rrfScoreMin?: number | null;
+  rerankScoreMax?: number | null;
+  rerankScoreMin?: number | null;
+  redundancyRatio?: number | null;
+  query?: string;
+  rewrittenQuery?: string;
+};
+
+type SourceRef = {
+  file: string;
+  page?: string | number;
+  text: string;
+};
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  kind?: "normal" | "credits";
+  upgradeUrl?: string;
+  sources?: SourceRef[];
+  symptoms_to_ask?: string[];
+  needs_doctor?: boolean;
+  diagnostics?: DiagnosticsData | null;
+};
+
+type ChatSession = {
+  id: string;
+  title: string;
+};
+
+type UserProfile = {
+  user: {
+    name?: string | null;
+    email: string;
+    role: "USER" | "ADMIN" | "SUPER_ADMIN" | string;
+    planSlug?: string;
+    planName?: string;
+  };
+  quota: {
+    dailyLimit: number;
+    monthlyLimit: number;
+  };
+  credits?: {
+    dailyLimit: number;
+    monthlyLimit: number;
+    todayUsed: number;
+    monthlyUsed: number;
+    todayRemaining: number;
+    monthlyRemaining: number;
+  };
+  usage: {
+    todayCount: number;
+    monthlyCount: number;
+  };
+};
+
+type AgentSettings = {
+  agentName: string;
+  agentSubtitle: string;
+  profileImageUrl: string;
+  welcomeMessage: string;
+  inputPlaceholder: string;
+  disclaimer: string;
+};
+
+const DEFAULT_AGENT_SETTINGS: AgentSettings = {
+  agentName: "Siddha MedBot",
+  agentSubtitle: "Medical Research Assistant",
+  profileImageUrl: "/bot-profile.png",
+  welcomeMessage:
+    "Hey there! I'm **Siddha MedBot**, your Medical Research Assistant.\n\nI can help you explore and understand the curated resources in the Knowledge Base. You can ask me anything about Siddha medicine, treatments, and clinical studies covered by those sources.\n\n*Tip: Neenga Tanglish-la kooda kelvi kekalam! I understand and speak Tanglish fluently.*\n\nWhat would you like to explore today?",
+  inputPlaceholder: "Ask anything about Siddha medicine",
+  disclaimer:
+    "AI can make mistakes. Please verify important medical information with a qualified practitioner.",
+};
+
+function normalizeAgentSettings(settings: Partial<AgentSettings> | null | undefined): AgentSettings {
+  return {
+    agentName: settings?.agentName || DEFAULT_AGENT_SETTINGS.agentName,
+    agentSubtitle: settings?.agentSubtitle || DEFAULT_AGENT_SETTINGS.agentSubtitle,
+    profileImageUrl: settings?.profileImageUrl || DEFAULT_AGENT_SETTINGS.profileImageUrl,
+    welcomeMessage: settings?.welcomeMessage || DEFAULT_AGENT_SETTINGS.welcomeMessage,
+    inputPlaceholder: settings?.inputPlaceholder || DEFAULT_AGENT_SETTINGS.inputPlaceholder,
+    disclaimer: settings?.disclaimer || DEFAULT_AGENT_SETTINGS.disclaimer,
+  };
+}
+
+function DiagnosticsInspector({ diagnostics }: { diagnostics: DiagnosticsData }) {
   const [open, setOpen] = useState(false);
   if (!diagnostics) return null;
 
@@ -354,11 +548,11 @@ function DiagnosticsInspector({ diagnostics }: { diagnostics: any }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
               <div className="flex flex-col gap-1">
                 <span className="text-neutral-500 font-medium">Original Query:</span>
-                <span className="text-neutral-300 italic">"{diagnostics.query}"</span>
+                <span className="text-neutral-300 italic">&quot;{diagnostics.query}&quot;</span>
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-neutral-500 font-medium">Rewritten Search Query:</span>
-                <span className="text-neutral-300 font-semibold text-emerald-400">"{diagnostics.rewrittenQuery}"</span>
+                <span className="text-neutral-300 font-semibold text-emerald-400">&quot;{diagnostics.rewrittenQuery}&quot;</span>
               </div>
             </div>
           </div>
@@ -369,8 +563,17 @@ function DiagnosticsInspector({ diagnostics }: { diagnostics: any }) {
 }
 
 // ── Structured Medical Report Component ─────────────────────────────────
+type StructuredReport = {
+  answer?: string;
+  diagnosis?: string;
+  symptoms?: string;
+  siddha_medicine?: string;
+  food_recommendation?: string;
+  doctor_consultation?: string;
+};
+
 function StructuredMedicalReport({ text }: { text: string }) {
-  let parsed: any = null;
+  let parsed: StructuredReport | null = null;
 
   // 1. Try parsing JSON first
   try {
@@ -380,9 +583,14 @@ function StructuredMedicalReport({ text }: { text: string }) {
     if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
       clean = clean.substring(startIdx, endIdx + 1);
     }
-    parsed = JSON.parse(clean);
-  } catch (e) {
+    parsed = JSON.parse(clean) as StructuredReport;
+  } catch {
     parsed = null;
+  }
+
+  // New responses are intentionally rendered as one concise answer.
+  if (parsed?.answer) {
+    return <RenderMarkdown text={parsed.answer} />;
   }
 
   // 2. If not valid JSON, check if it's the structured markdown fallback format
@@ -402,98 +610,91 @@ function StructuredMedicalReport({ text }: { text: string }) {
   }
 
   // 3. Fallback to normal RenderMarkdown if it's a general text or cannot be structured
-  if (!parsed || typeof parsed !== "object" || (!parsed.diagnosis && !parsed.siddha_medicine && !parsed.symptoms)) {
+  if (!parsed || (!parsed.diagnosis && !parsed.siddha_medicine && !parsed.symptoms)) {
     return <RenderMarkdown text={text} />;
   }
 
-  const {
-    diagnosis,
-    symptoms,
-    siddha_medicine,
-    food_recommendation,
-    doctor_consultation,
-  } = parsed;
+  const unifiedAnswer = [
+    parsed.diagnosis,
+    parsed.symptoms,
+    parsed.siddha_medicine,
+    parsed.food_recommendation,
+    parsed.doctor_consultation,
+  ].filter(Boolean).join("\n\n");
+
+  return <RenderMarkdown text={unifiedAnswer} />;
+}
+
+function formatLimit(value: number) {
+  return value >= 999999 ? "Unlimited" : value.toLocaleString("en-IN");
+}
+
+function usagePercent(count: number, limit: number) {
+  if (limit >= 999999) return 0;
+  return Math.min(100, Math.round((count / Math.max(limit, 1)) * 100));
+}
+
+function UsageCounter({ profile }: { profile: UserProfile }) {
+  const credits = profile.credits || {
+    dailyLimit: profile.quota.dailyLimit,
+    monthlyLimit: profile.quota.monthlyLimit,
+    todayUsed: profile.usage.todayCount,
+    monthlyUsed: profile.usage.monthlyCount,
+    todayRemaining: Math.max(0, profile.quota.dailyLimit - profile.usage.todayCount),
+    monthlyRemaining: Math.max(0, profile.quota.monthlyLimit - profile.usage.monthlyCount),
+  };
+  const dailyPercent = usagePercent(credits.todayUsed, credits.dailyLimit);
+  const monthlyPercent = usagePercent(credits.monthlyUsed, credits.monthlyLimit);
 
   return (
-    <div className="space-y-5 w-full text-sm">
-      {/* Disclaimer Banner */}
-      <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3.5 text-neutral-300 text-xs leading-relaxed flex items-start gap-2.5 shadow-sm">
-        <Shield className="w-4.5 h-4.5 text-emerald-400 shrink-0 mt-0.5" />
-        <p>
-          <strong className="text-emerald-300 font-semibold">Disclaimer:</strong> Siddha recommendations should be used under clinical supervision. Consult a registered Siddha practitioner (BSMS) for formal diagnosis.
-        </p>
+    <div className="hidden min-w-[188px] rounded-xl border border-[var(--app-border)] bg-[var(--app-soft)] px-3 py-2 sm:block">
+      <div className="flex items-center justify-between gap-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--app-faint)]">
+        <span>{profile.user.planName || "Current Plan"}</span>
+        <span>{formatLimit(credits.monthlyRemaining)} left</span>
       </div>
+      <div className="mt-2 space-y-1.5">
+        <div className="h-1.5 overflow-hidden rounded-full bg-[var(--app-border)]">
+          <div className="h-full rounded-full bg-[#0B8B73]" style={{ width: `${monthlyPercent}%` }} />
+        </div>
+        <div className="flex justify-between text-[11px] text-[var(--app-muted)]">
+          <span>{credits.monthlyUsed.toLocaleString("en-IN")} credits used</span>
+          <span>{formatLimit(credits.dailyLimit)} daily</span>
+        </div>
+      </div>
+      {dailyPercent >= 80 && credits.dailyLimit < 999999 && (
+        <p className="mt-1 text-[10px] font-medium text-amber-500">{dailyPercent}% of today&apos;s credits used</p>
+      )}
+    </div>
+  );
+}
 
-      <div className="grid grid-cols-1 gap-4">
-        {/* Diagnosis & Symptoms Card */}
-        {(diagnosis || symptoms) && (
-          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 space-y-4 hover:border-white/10 transition-all shadow-md">
-            {diagnosis && (
-              <div>
-                <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-1.5 flex items-center gap-2">
-                  <Activity className="w-3.5 h-3.5" />
-                  Clinical Impression & Diagnosis
-                </h4>
-                <div className="text-neutral-200 leading-relaxed text-sm font-medium">
-                  <RenderMarkdown text={diagnosis} />
-                </div>
-              </div>
-            )}
-            {symptoms && (
-              <div className="pt-3 border-t border-white/5">
-                <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-1.5">
-                  Symptoms Analysis
-                </h4>
-                <div className="text-neutral-400 leading-relaxed text-xs">
-                  <RenderMarkdown text={symptoms} />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Siddha Medicine Card */}
-        {siddha_medicine && (
-          <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-2xl p-5 hover:border-emerald-500/30 transition-all shadow-lg">
-            <h4 className="text-xs font-bold text-emerald-300 uppercase tracking-widest mb-2 flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              Siddha Pharmacopoeia & Therapeutics
-            </h4>
-            <div className="text-emerald-50 leading-relaxed text-sm">
-              <RenderMarkdown text={siddha_medicine} />
-            </div>
-          </div>
-        )}
-
-        {/* Food & Dietary Guidelines */}
-        {food_recommendation && (
-          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 hover:border-white/10 transition-all shadow-md">
-            <h4 className="text-xs font-bold text-teal-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-              🍎 Food & Dietary Guidelines
-            </h4>
-            <div className="text-neutral-200 leading-relaxed text-sm">
-              <RenderMarkdown text={food_recommendation} />
-            </div>
-          </div>
-        )}
-
-        {/* Clinical Advice */}
-        {doctor_consultation && (
-          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 hover:border-white/10 transition-all shadow-md">
-            <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-              🧑‍⚕️ Clinical Advice & Practitioner Guidance
-            </h4>
-            <div className="text-neutral-300 leading-relaxed text-sm italic">
-              <RenderMarkdown text={doctor_consultation} />
-            </div>
-          </div>
-        )}
+function CreditUpgradeMessage({ message, upgradeUrl }: { message: string; upgradeUrl?: string }) {
+  return (
+    <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-[var(--app-text)]">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-400/20 text-amber-500">
+          <AlertTriangle className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-[var(--app-text)]">Credits exhausted</p>
+          <p className="mt-1 text-sm leading-6 text-[var(--app-muted)]">{message}</p>
+          <Link
+            href={upgradeUrl || "/#pricing"}
+            className="mt-3 inline-flex items-center rounded-lg bg-[#0B8B73] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#087760]"
+          >
+            View upgrade plans
+          </Link>
+        </div>
       </div>
     </div>
   );
 }
 
 function generateUUID() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
@@ -503,23 +704,31 @@ function generateUUID() {
 // ── Main Page ──────────────────────────────────────────────────────────
 export default function Home() {
   const router = useRouter();
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const { theme, setTheme } = useProductTheme();
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  const [activeSessionId, setActiveSessionId] = useState<string>("");
-  const [sessions, setSessions] = useState<any[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => generateUUID());
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState<boolean>(false);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [isDesktop, setIsDesktop] = useState<boolean>(false);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sessionSearch, setSessionSearch] = useState("");
+  const deferredSessionSearch = useDeferredValue(sessionSearch);
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
 
-  const [messages, setMessages] = useState<Array<{role: string, content: string, sources?: any[], symptoms_to_ask?: string[], needs_doctor?: boolean, diagnostics?: any}>>([ 
-    { role: "assistant", content: "Hey there! 👋 I'm **MedBot**, your friendly Medical Research Assistant.\n\nI can help you explore and understand your medical documents synced in the Knowledge Base. You can ask me anything about Siddha medicine, treatments, and clinical studies!\n\n💡 *Tip: Neenga Tanglish-la kooda kelvi kekalam! I understand and speak Tanglish fluently.* 😊\n\nWhat would you like to explore today?" }
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: "assistant", content: DEFAULT_AGENT_SETTINGS.welcomeMessage }
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [sheetUrl, setSheetUrl] = useState("");
+  const [agentStartedAt, setAgentStartedAt] = useState<number | null>(null);
+  const [agentElapsedMs, setAgentElapsedMs] = useState(0);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [agentSteps, setAgentSteps] = useState<StepStates>({
     medicalSafety: "pending",
+    clarification: "pending",
     retrieval: "pending",
     reranking: "pending",
     generator: "pending",
@@ -527,18 +736,33 @@ export default function Home() {
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const visibleSessions = sessions.filter((session) =>
+    session.title.toLowerCase().includes(deferredSessionSearch.trim().toLowerCase())
+  );
+  const currentCredits = userProfile?.credits || (userProfile ? {
+    dailyLimit: userProfile.quota.dailyLimit,
+    monthlyLimit: userProfile.quota.monthlyLimit,
+    todayUsed: userProfile.usage.todayCount,
+    monthlyUsed: userProfile.usage.monthlyCount,
+    todayRemaining: Math.max(0, userProfile.quota.dailyLimit - userProfile.usage.todayCount),
+    monthlyRemaining: Math.max(0, userProfile.quota.monthlyLimit - userProfile.usage.monthlyCount),
+  } : null);
 
   const fetchUserProfile = async () => {
     try {
       const res = await fetch("/api/auth/me");
       const data = await res.json();
+      if (!res.ok) {
+        setToast({ message: data.error || "Unable to verify your session. Please refresh once.", type: "error" });
+        return;
+      }
       if (!data.user) {
         router.push("/login");
         return;
       }
-      setUserProfile(data);
-    } catch (e) {
-      router.push("/login");
+      setUserProfile(data as UserProfile);
+    } catch {
+      setToast({ message: "Unable to verify your session. Please refresh once.", type: "error" });
     }
   };
 
@@ -557,15 +781,36 @@ export default function Home() {
     }
   };
 
+  const fetchAgentSettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/agent-settings");
+      const data = await res.json();
+      if (!res.ok || !data.settings) return;
+
+      const nextSettings = normalizeAgentSettings(data.settings);
+      setAgentSettings(nextSettings);
+      setMessages((current) => (
+        current.length === 1
+        && current[0].role === "assistant"
+        && current[0].content === DEFAULT_AGENT_SETTINGS.welcomeMessage
+          ? [{ role: "assistant", content: nextSettings.welcomeMessage }]
+          : current
+      ));
+    } catch (error) {
+      console.error("Failed to fetch agent settings:", error);
+    }
+  }, []);
+
   const handleNewChat = () => {
     if (loading) return;
     setActiveSessionId(generateUUID());
     setMessages([
       { 
         role: "assistant", 
-        content: "Hey there! 👋 I'm **MedBot**, your friendly Medical Research Assistant.\n\nI can help you explore and understand your medical documents synced in the Knowledge Base. You can ask me anything about Siddha medicine, treatments, and clinical studies!\n\n💡 *Tip: Neenga Tanglish-la kooda kelvi kekalam! I understand and speak Tanglish fluently.* 😊\n\nWhat would you like to explore today?" 
+        content: agentSettings.welcomeMessage
       }
     ]);
+    if (!isDesktop) setSidebarOpen(false);
   };
 
   const handleSelectSession = async (id: string) => {
@@ -577,6 +822,7 @@ export default function Home() {
       if (res.ok && data.success) {
         setMessages(data.messages || []);
         setActiveSessionId(id);
+        if (!isDesktop) setSidebarOpen(false);
       } else {
         showToast(data.error || "Failed to load chat history", "error");
       }
@@ -613,34 +859,94 @@ export default function Home() {
   };
 
   useEffect(() => {
-    setActiveSessionId(generateUUID());
-    fetchUserProfile();
-    fetchSessions();
+    const loadInitialData = async () => {
+      void fetchAgentSettings();
+      try {
+        const profileRes = await fetch("/api/auth/me");
+        const profileData = await profileRes.json();
+        if (!profileRes.ok) {
+          setToast({ message: profileData.error || "Unable to verify your session. Please refresh once.", type: "error" });
+          return;
+        }
+        if (!profileData.user) {
+          router.push("/login");
+          return;
+        }
+        setUserProfile(profileData as UserProfile);
+    } catch {
+      setToast({ message: "Unable to verify your session. Please refresh once.", type: "error" });
+    }
+
+      try {
+        setSessionsLoading(true);
+        const sessionsRes = await fetch("/api/chat/sessions");
+        const sessionsData = await sessionsRes.json();
+        if (sessionsRes.ok && sessionsData.success) {
+          setSessions(sessionsData.sessions || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch sessions:", error);
+      } finally {
+        setSessionsLoading(false);
+      }
+    };
+
+    void loadInitialData();
+  }, [router, fetchAgentSettings]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(min-width: 768px)");
+
+    const syncSidebarState = (matches: boolean) => {
+      setIsDesktop(matches);
+      setSidebarOpen(matches);
+    };
+
+    syncSidebarState(mediaQuery.matches);
+
+    const handleChange = (event: MediaQueryListEvent) => {
+      syncSidebarState(event.matches);
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!loading || !agentStartedAt) return;
+
+    const interval = setInterval(() => {
+      setAgentElapsedMs((current) => current + 500);
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [loading, agentStartedAt]);
+
   const showToast = (message: string, type: "success" | "error") => {
     setToast({ message, type });
   };
 
-  const handleSend = async (e?: React.FormEvent, customInput?: string) => {
+  const handleSend = async (e?: React.FormEvent, customInput?: string, clarificationAnswered = false, originalQuery?: string) => {
     if (e) e.preventDefault();
     const textToSend = customInput || input;
     if (!textToSend.trim() || loading) return;
 
-    const userMessage = { role: "user", content: textToSend };
-    const currentHistory = messages.map(m => ({ role: m.role, content: m.content }));
-    
+    const userMessage = { role: "user" as const, content: textToSend };
+
     setMessages(prev => [...prev, userMessage]);
     if (!customInput) setInput("");
     setLoading(true);
+    setAgentStartedAt(1);
+    setAgentElapsedMs(0);
 
     // Initialize agent logger tracking
     setAgentSteps({
       medicalSafety: "pending",
+      clarification: "pending",
       retrieval: "pending",
       reranking: "pending",
       generator: "pending",
@@ -651,11 +957,25 @@ export default function Home() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: textToSend, history: currentHistory, sessionId: activeSessionId }),
+        body: JSON.stringify({ query: textToSend, originalQuery, sessionId: activeSessionId, clarificationAnswered }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
+        if (response.status === 429) {
+          const creditMessage = errorData.error || "Your credits have ended for this plan.";
+          setMessages(prev => [
+            ...prev,
+            {
+              role: "assistant",
+              content: creditMessage,
+              kind: "credits",
+              upgradeUrl: typeof errorData.upgradeUrl === "string" ? errorData.upgradeUrl : "/#pricing",
+            },
+          ]);
+          showToast("Your current plan credits are finished.", "error");
+          return;
+        }
         throw new Error(errorData.error || "Failed to fetch response");
       }
 
@@ -663,7 +983,7 @@ export default function Home() {
       const decoder = new TextDecoder();
       if (!reader) throw new Error("No response reader found");
 
-      let currentAssistantMessage = {
+      const initialAssistantMessage: ChatMessage = {
         role: "assistant",
         content: "",
         sources: [],
@@ -672,7 +992,7 @@ export default function Home() {
         diagnostics: null,
       };
 
-      setMessages(prev => [...prev, currentAssistantMessage]);
+      setMessages(prev => [...prev, initialAssistantMessage]);
 
       let buffer = "";
       while (true) {
@@ -693,7 +1013,15 @@ export default function Home() {
           
           const event = eventMatch[1].trim();
           const rawData = dataMatch[1].trim();
-          let data;
+          let data: {
+            node?: keyof StepStates;
+            token?: string;
+            answer?: string;
+            sources?: SourceRef[];
+            symptoms_to_ask?: string[];
+            needs_doctor?: boolean;
+            message?: string;
+          };
           try {
             data = JSON.parse(rawData);
           } catch (e) {
@@ -702,423 +1030,410 @@ export default function Home() {
           }
 
           if (event === "node_start") {
-            setAgentSteps(prev => ({
-              ...prev,
-              [data.node]: "active"
-            }));
+            if (data.node) {
+              setAgentSteps(prev => ({
+                ...prev,
+                [data.node as string]: "active"
+              }));
+            }
           } else if (event === "node_end") {
-            setAgentSteps(prev => ({
-              ...prev,
-              [data.node]: "completed"
-            }));
+            if (data.node) {
+              setAgentSteps(prev => ({
+                ...prev,
+                [data.node as string]: "completed"
+              }));
+            }
           } else if (event === "token") {
-            currentAssistantMessage.content += data.token;
             setMessages(prev => {
               const copy = [...prev];
-              copy[copy.length - 1] = { ...currentAssistantMessage };
+              const lastMessage = copy[copy.length - 1];
+              copy[copy.length - 1] = {
+                ...lastMessage,
+                role: "assistant",
+                content: `${lastMessage?.content || ""}${data.token || ""}`,
+              };
               return copy;
             });
           } else if (event === "diagnostics") {
-            currentAssistantMessage.diagnostics = data;
             setMessages(prev => {
               const copy = [...prev];
-              copy[copy.length - 1] = { ...currentAssistantMessage };
+              const lastMessage = copy[copy.length - 1];
+              copy[copy.length - 1] = {
+                ...lastMessage,
+                role: "assistant",
+                diagnostics: data as DiagnosticsData,
+              };
               return copy;
             });
           } else if (event === "done") {
-            currentAssistantMessage.content = data.answer;
-            currentAssistantMessage.sources = data.sources;
-            currentAssistantMessage.symptoms_to_ask = data.symptoms_to_ask;
-            currentAssistantMessage.needs_doctor = data.needs_doctor;
             setMessages(prev => {
               const copy = [...prev];
-              copy[copy.length - 1] = { ...currentAssistantMessage };
+              const lastMessage = copy[copy.length - 1];
+              copy[copy.length - 1] = {
+                ...lastMessage,
+                role: "assistant",
+                content: data.answer || "",
+                sources: data.sources || [],
+                symptoms_to_ask: data.symptoms_to_ask || [],
+                needs_doctor: data.needs_doctor || false,
+              };
               return copy;
             });
           } else if (event === "error") {
-            throw new Error(data.message);
+            throw new Error(data.message || "Unknown error");
           }
         }
       }
-    } catch (err: any) {
-      setMessages(prev => [
-        ...prev.slice(0, -1), // Remove the empty template if error occurred
-        { role: "assistant", content: `Oops! Something went wrong while processing your question. 😔\n\n**Error:** ${err.message}\n\nPlease try again, or check if you've uploaded documents first.` }
-      ]);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setMessages(prev => {
+        const next = [...prev];
+        const lastMessage = next[next.length - 1];
+
+        if (lastMessage?.role === "assistant" && !lastMessage.content && !lastMessage.sources?.length) {
+          next.pop();
+        }
+
+        return [
+          ...next,
+          { role: "assistant", content: `Something went wrong while processing your question.\n\nError: ${message}\n\nPlease try again, or check whether documents are available for this answer.` }
+        ];
+      });
     } finally {
       setLoading(false);
+      setAgentStartedAt(null);
       fetchUserProfile();
       fetchSessions();
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const res = await fetch("/api/ingest", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      showToast(`✅ "${file.name}" uploaded — ${data.message}`, "success");
-      setMessages(prev => [...prev, { 
-        role: "assistant", 
-        content: `Great news! 🎉 I've successfully processed **${file.name}**.\n\nThe document has been split into searchable chunks and stored in the knowledge base. You can now ask me questions about its contents!\n\n💡 **Try asking something like:**\n- "What are the main findings?"\n- "Summarize the methodology"\n- "What dosages were mentioned?"` 
-      }]);
-    } catch (err: any) {
-      showToast(`Upload failed: ${err.message}`, "error");
-    } finally {
-      setUploading(false);
-      e.target.value = "";
-    }
-  };
-
-  const handleSheetSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!sheetUrl) return;
-
-    setUploading(true);
-    try {
-      const res = await fetch("/api/ingest/sheet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: sheetUrl }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      showToast(`✅ Google Sheet synced — ${data.message}`, "success");
-      setMessages(prev => [...prev, { 
-        role: "assistant", 
-        content: `Perfect! 📊 I've synced your Google Sheet data into the knowledge base.\n\nThe spreadsheet has been processed and indexed. You can now query its contents!\n\n💡 **Try asking:**\n- "What data does the sheet contain?"\n- "Show me trends in the data"\n- "Summarize the key metrics"` 
-      }]);
-      setSheetUrl("");
-    } catch (err: any) {
-      showToast(`Sheet sync failed: ${err.message}`, "error");
-    } finally {
-      setUploading(false);
     }
   };
 
   const handleClearChat = () => {
     setMessages([{ 
       role: "assistant", 
-      content: "Chat cleared! 🧹\n\nYour uploaded documents are still in the knowledge base — feel free to ask me new questions anytime." 
+      content: "Chat cleared.\n\nThe curated knowledge resources are still available, so you can ask a new question anytime." 
     }]);
+    if (!isDesktop) setSidebarOpen(false);
   };
 
   const handleLogout = async () => {
     try {
       const res = await fetch("/api/auth/login", { method: "DELETE" });
       if (res.ok) {
-        router.push("/login");
+        if (!isDesktop) setSidebarOpen(false);
+        router.replace("/login");
+        router.refresh();
       } else {
         showToast("Failed to log out", "error");
       }
-    } catch (e) {
+    } catch {
       showToast("An error occurred during logout", "error");
     }
   };
 
   return (
-    <div className="flex h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden">
+    <div
+      data-theme={theme}
+      className="chatgpt-shell product-theme relative flex h-[100dvh] overflow-hidden bg-[var(--app-bg)] font-sans text-[var(--app-text)]"
+    >
       {/* Toast Notifications */}
       <AnimatePresence>
         {toast && (
-          <Toast 
-            message={toast.message} 
-            type={toast.type} 
-            onClose={() => setToast(null)} 
+          <Toast
+            message={toast.message}
+            type={toast.type}
+            onClose={() => setToast(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Mobile Backdrop */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <motion.button
+            type="button"
+            aria-label="Close chat history"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSidebarOpen(false)}
+            className="fixed inset-0 z-30 bg-slate-950/55 backdrop-blur-sm md:hidden"
           />
         )}
       </AnimatePresence>
 
       {/* Sidebar */}
-      <motion.aside 
-        initial={{ x: -300 }}
-        animate={{ x: 0 }}
-        className="w-80 bg-white/5 border-r border-white/10 backdrop-blur-xl p-6 flex flex-col gap-5 z-10"
+      <motion.aside
+        initial={false}
+        animate={{ x: sidebarOpen ? 0 : "-100%" }}
+        transition={{ type: "spring", stiffness: 260, damping: 30 }}
+        className={`fixed inset-y-0 left-0 z-40 flex w-[min(19rem,88vw)] translate-x-0 flex-col border-r border-[var(--app-border)] bg-[var(--app-sidebar)] px-2.5 py-2.5 shadow-[0_24px_80px_var(--app-shadow)] transition-[width] duration-200 md:static md:z-10 md:translate-x-0 md:shadow-none ${
+          sidebarCollapsed ? "md:w-[64px]" : "md:w-[276px]"
+        }`}
       >
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-teal-500 bg-clip-text text-transparent">
-                MedBot
-              </h1>
-              <p className="text-[10px] text-neutral-500 uppercase tracking-widest font-bold">Medical RAG Assistant</p>
-            </div>
+        <div className="flex items-center justify-between gap-2 px-1.5 py-1">
+          <div className={sidebarCollapsed ? "md:hidden" : ""}>
+            <ProductBrand compact />
           </div>
-          <p className="text-xs text-neutral-400 mt-3 leading-relaxed">
-            Powered by <span className="text-emerald-400 font-semibold">NVIDIA Llama 3.3</span> & ChromaDB
-          </p>
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            className={`hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--app-muted)] transition hover:bg-[var(--app-soft)] hover:text-[var(--app-text)] md:inline-flex ${
+              sidebarCollapsed ? "mx-auto" : ""
+            }`}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--app-muted)] transition hover:bg-[var(--app-soft)] md:hidden"
+            aria-label="Close sidebar"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        {/* New Conversation Button */}
-        <button
-          onClick={handleNewChat}
-          className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-[#7A6430]/20 to-[#C9A84C]/20 border border-[#7A6430]/40 text-[#C9A84C] hover:from-[#C9A84C]/30 hover:to-[#E8C86A]/30 transition-all shadow-md font-bold uppercase tracking-wider"
-        >
-          <Sparkles className="w-4 h-4 text-[#E8C86A]" /> New Conversation
-        </button>
+        <div className="mt-3 space-y-1">
+          <button
+            onClick={handleNewChat}
+            className={`flex w-full items-center rounded-lg px-2.5 py-2.5 text-left text-sm font-medium text-[var(--app-text)] transition hover:bg-[var(--app-soft)] ${
+              sidebarCollapsed ? "md:justify-center md:px-0" : "gap-2.5"
+            }`}
+            title={sidebarCollapsed ? "New chat" : undefined}
+          >
+            <SquarePen className="h-4 w-4 text-[var(--app-muted)]" />
+            <span className={sidebarCollapsed ? "md:hidden" : ""}>New chat</span>
+          </button>
+          <label className={`relative block ${sidebarCollapsed ? "md:hidden" : ""}`}>
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-faint)]" />
+            <input
+              value={sessionSearch}
+              onChange={(event) => setSessionSearch(event.target.value)}
+              placeholder="Search chats"
+              className="w-full rounded-lg bg-transparent py-2.5 pl-9 pr-3 text-sm text-[var(--app-text)] outline-none transition placeholder:text-[var(--app-faint)] hover:bg-[var(--app-soft)] focus:bg-[var(--app-soft)]"
+            />
+          </label>
+        </div>
 
-        <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-1 custom-scrollbar">
-          {/* Recent Consultations (Chat History) */}
-          <div className="space-y-2 flex flex-col min-h-0">
-            <div className="flex items-center justify-between px-1">
-              <span className="text-[10px] text-[#C9A84C]/70 uppercase tracking-wider font-bold">Recent Consultations</span>
-              {sessionsLoading && <Loader2 className="w-3 h-3 text-[#C9A84C] animate-spin" />}
+        <div className={`custom-scrollbar mt-3 min-h-0 flex-1 overflow-y-auto px-1 ${sidebarCollapsed ? "md:hidden" : ""}`}>
+          <div className="flex items-center justify-between px-1.5 pb-2 pt-1">
+            <span className="text-[11px] font-semibold text-[var(--app-faint)]">Chats</span>
+            {sessionsLoading && <Loader2 className="h-3 w-3 animate-spin text-[#0B8B73]" />}
+          </div>
+
+          {visibleSessions.length === 0 ? (
+            <div className="rounded-lg px-2 py-3 text-xs leading-5 text-[var(--app-faint)]">
+              {sessions.length === 0 ? "Your conversations will appear here." : "No matching chats found."}
             </div>
-            <div className="space-y-1.5 max-h-[250px] overflow-y-auto pr-1">
-              {sessions.length === 0 ? (
-                <div className="text-left py-3 px-2 text-[11px] text-neutral-500 italic">
-                  No past conversations
-                </div>
-              ) : (
-                sessions.map((s) => (
-                  <div
-                    key={s.id}
-                    onClick={() => handleSelectSession(s.id)}
-                    className={`group flex items-center justify-between p-2.5 rounded-lg border text-left cursor-pointer transition-all ${
-                      activeSessionId === s.id
-                        ? "bg-[#C9A84C]/10 border-[#C9A84C]/40 text-[#E8C86A]"
-                        : "bg-[#0d0d0d] border-white/5 text-neutral-300 hover:bg-white/[0.02] hover:border-white/10"
-                    }`}
+          ) : (
+            <div className="space-y-0.5">
+              {visibleSessions.map((session) => (
+                <div
+                  key={session.id}
+                  onClick={() => handleSelectSession(session.id)}
+                  className={`group flex cursor-pointer items-center justify-between rounded-lg px-2 py-2 text-left transition ${
+                    activeSessionId === session.id
+                      ? "bg-[var(--app-soft)] text-[var(--app-text)]"
+                      : "text-[var(--app-muted)] hover:bg-[var(--app-soft)] hover:text-[var(--app-text)]"
+                  }`}
+                >
+                  <span className="truncate text-[13px] font-medium">{session.title}</span>
+                  <button
+                    onClick={(event) => handleDeleteSession(event, session.id)}
+                    className="ml-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--app-faint)] opacity-0 transition group-hover:opacity-100 hover:bg-[var(--app-raised)] hover:text-red-400"
+                    aria-label={`Delete ${session.title}`}
                   >
-                    <div className="flex items-center gap-2 truncate flex-1 mr-1">
-                      <Clock className="w-3.5 h-3.5 opacity-60 shrink-0" />
-                      <span className="text-xs truncate font-medium">{s.title}</span>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteSession(e, s.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-neutral-500 hover:text-red-400 transition-all shrink-0"
-                      title="Delete conversation"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))
-              )}
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* User Profile Card */}
-          {userProfile?.user && (
-            <div className="p-4 rounded-xl bg-[#0d0d0d] border border-white/5 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#7A6430] to-[#C9A84C] flex items-center justify-center text-[#F5F0E8] font-bold">
-                  {userProfile.user.name ? userProfile.user.name[0].toUpperCase() : userProfile.user.email[0].toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-semibold text-[#F5F0E8] truncate">
-                    {userProfile.user.name || "Siddha Researcher"}
-                  </h3>
-                  <p className="text-[10px] text-neutral-500 truncate">{userProfile.user.email}</p>
-                </div>
-              </div>
-
-              {/* Role Tier Badge */}
-              <div className="flex items-center justify-between pt-2 border-t border-white/5">
-                <span className="text-[10px] text-neutral-400 uppercase tracking-wider">Account Level</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
-                  userProfile.user.role === "SUPER_ADMIN" 
-                    ? "bg-[#C9A84C]/10 text-[#C9A84C] border-[#C9A84C]/30"
-                    : userProfile.user.role === "ADMIN"
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                    : "bg-white/5 text-neutral-400 border-white/10"
-                }`}>
-                  {userProfile.user.role === "SUPER_ADMIN" 
-                    ? "Super Admin" 
-                    : userProfile.user.role === "ADMIN" 
-                    ? "Doctor / Admin" 
-                    : "Researcher (USER)"}
+        {userProfile?.user && (
+          <details className="group/account relative mt-2 border-t border-[var(--app-border)] pt-2">
+            <summary className={`flex cursor-pointer list-none items-center rounded-lg px-2 py-2 transition hover:bg-[var(--app-soft)] [&::-webkit-details-marker]:hidden ${
+              sidebarCollapsed ? "md:justify-center md:px-0" : "gap-2.5"
+            }`}>
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#12C48B] to-[#0B8B73] text-xs font-bold text-white">
+                {userProfile.user.name ? userProfile.user.name[0].toUpperCase() : userProfile.user.email[0].toUpperCase()}
+              </span>
+              <span className={`min-w-0 flex-1 ${sidebarCollapsed ? "md:hidden" : ""}`}>
+                <span className="block truncate text-sm font-medium text-[var(--app-text)]">
+                  {userProfile.user.name || "Siddha Researcher"}
                 </span>
-              </div>
-            </div>
-          )}
+                <span className="block truncate text-[10px] text-[var(--app-faint)]">
+                  {userProfile.user.email}
+                </span>
+              </span>
+              <MoreHorizontal className={`h-4 w-4 shrink-0 text-[var(--app-faint)] ${sidebarCollapsed ? "md:hidden" : ""}`} />
+            </summary>
 
-          {/* Quota Telemetry Widget */}
-          {userProfile && (
-            <div className="p-4 rounded-xl bg-[#0d0d0d] border border-[#7A6430]/30 space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-[#C9A84C] uppercase tracking-wider">Usage Telemetry</h4>
-                <Activity className="w-4 h-4 text-[#C9A84C] opacity-80" />
-              </div>
-
-              {/* Daily Queries */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-neutral-400">Daily Quota</span>
-                  <span className="font-semibold text-[#F5F0E8]">
-                    {userProfile.quota.dailyLimit === 999999 ? "Unlimited" : `${Math.max(0, userProfile.quota.dailyLimit - userProfile.usage.todayCount)} remaining`}
+            <div className={`absolute bottom-[calc(100%+0.5rem)] z-50 w-[244px] space-y-1 rounded-xl border border-[var(--app-border)] bg-[var(--app-raised)] p-1.5 shadow-[0_16px_42px_var(--app-shadow)] ${
+              sidebarCollapsed ? "left-0 md:left-[calc(100%+0.5rem)] md:bottom-0" : "left-0"
+            }`}>
+              <div className="px-2 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--app-faint)]">
+                  {userProfile.user.role === "SUPER_ADMIN" ? "Super Admin" : userProfile.user.role === "ADMIN" ? "Doctor / Admin" : "Researcher"}
+                </p>
+                <div className="mt-2 flex items-center justify-between text-xs text-[var(--app-muted)]">
+                  <span>Daily credits</span>
+                  <span className="font-semibold text-[var(--app-text)]">
+                    {currentCredits?.dailyLimit === 999999 ? "Unlimited" : `${currentCredits?.todayRemaining ?? 0} left`}
                   </span>
                 </div>
-                {userProfile.quota.dailyLimit !== 999999 && (
-                  <div className="w-full h-1.5 bg-[#020202] border border-white/5 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-[#7A6430] to-[#C9A84C] transition-all duration-300"
-                      style={{ 
-                        width: `${Math.min(100, Math.max(0, ((userProfile.quota.dailyLimit - userProfile.usage.todayCount) / userProfile.quota.dailyLimit) * 100))}%` 
-                      }}
-                    />
-                  </div>
-                )}
-                <div className="flex justify-between text-[10px] text-neutral-500">
-                  <span>Used Today: {userProfile.usage.todayCount}</span>
-                  <span>Limit: {userProfile.quota.dailyLimit === 999999 ? "∞" : userProfile.quota.dailyLimit}</span>
-                </div>
-              </div>
-
-              {/* Monthly Queries */}
-              <div className="space-y-1.5 pt-2 border-t border-white/5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-neutral-400">Monthly Quota</span>
-                  <span className="font-semibold text-[#F5F0E8]">
-                    {userProfile.quota.monthlyLimit === 999999 ? "Unlimited" : `${Math.max(0, userProfile.quota.monthlyLimit - userProfile.usage.monthlyCount)} remaining`}
+                <div className="mt-1.5 flex items-center justify-between text-xs text-[var(--app-muted)]">
+                  <span>Monthly credits</span>
+                  <span className="font-semibold text-[var(--app-text)]">
+                    {currentCredits?.monthlyLimit === 999999 ? "Unlimited" : `${currentCredits?.monthlyRemaining ?? 0} left`}
                   </span>
                 </div>
-                {userProfile.quota.monthlyLimit !== 999999 && (
-                  <div className="w-full h-1.5 bg-[#020202] border border-white/5 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-emerald-600 to-teal-500 transition-all duration-300"
-                      style={{ 
-                        width: `${Math.min(100, Math.max(0, ((userProfile.quota.monthlyLimit - userProfile.usage.monthlyCount) / userProfile.quota.monthlyLimit) * 100))}%` 
-                      }}
-                    />
-                  </div>
-                )}
-                <div className="flex justify-between text-[10px] text-neutral-500">
-                  <span>Used Month: {userProfile.usage.monthlyCount}</span>
-                  <span>Limit: {userProfile.quota.monthlyLimit === 999999 ? "∞" : userProfile.quota.monthlyLimit}</span>
-                </div>
               </div>
-            </div>
-          )}
-        </div>
 
-        <div className="mt-auto space-y-2">
-          {(userProfile?.user?.role === "ADMIN" || userProfile?.user?.role === "SUPER_ADMIN") && (
-            <Link
-              href="/admin"
-              className="flex items-center justify-center gap-2 w-full py-2.5 text-sm font-semibold rounded-lg bg-gradient-to-r from-[#7A6430]/20 to-[#C9A84C]/20 border border-[#7A6430]/40 text-[#C9A84C] hover:from-[#C9A84C]/20 hover:to-[#E8C86A]/20 transition-all"
-            >
-              <Shield className="w-4 h-4" /> Admin Portal
-            </Link>
-          )}
-          <button 
-            onClick={handleClearChat}
-            className="flex items-center justify-center gap-2 w-full text-neutral-400 hover:text-red-400 text-sm transition-colors py-2 rounded-lg hover:bg-red-500/5"
-          >
-            <Trash2 className="w-4 h-4" /> Clear Chat
-          </button>
-          <button 
-            onClick={handleLogout}
-            className="flex items-center justify-center gap-2 w-full text-neutral-400 hover:text-[#C9A84C] text-sm transition-colors py-2 rounded-lg hover:bg-[#C9A84C]/5 border border-transparent hover:border-[#7A6430]/30"
-          >
-            <LogOut className="w-4 h-4" /> Sign Out
-          </button>
-        </div>
+              {(userProfile.user.role === "ADMIN" || userProfile.user.role === "SUPER_ADMIN") && (
+                <Link
+                  href={userProfile.user.role === "SUPER_ADMIN" ? "/super-admin" : "/admin"}
+                  className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-medium text-[var(--app-muted)] transition hover:bg-[var(--app-soft)] hover:text-[var(--app-text)]"
+                >
+                  <Shield className="h-3.5 w-3.5" />
+                  {userProfile.user.role === "SUPER_ADMIN" ? "Super admin console" : "Admin dashboard"}
+                </Link>
+              )}
+              <button onClick={handleClearChat} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-medium text-[var(--app-muted)] transition hover:bg-[var(--app-soft)] hover:text-[var(--app-text)]">
+                <Trash2 className="h-3.5 w-3.5" />
+                Clear current chat
+              </button>
+              <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-medium text-[var(--app-muted)] transition hover:bg-red-500/10 hover:text-red-400">
+                <LogOut className="h-3.5 w-3.5" />
+                Sign out
+              </button>
+            </div>
+          </details>
+        )}
       </motion.aside>
 
-      {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col relative">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-emerald-900/20 via-[#0a0a0a] to-[#0a0a0a] pointer-events-none" />
-        
-        <div className="flex-1 overflow-y-auto p-8 z-10 scroll-smooth">
-          <div className="max-w-3xl mx-auto space-y-8 pb-8">
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--app-bg)]">
+        <header className="sticky top-0 z-20 bg-[var(--app-panel)] px-3 py-2 sm:px-4">
+          <div className="flex w-full items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--app-text)] transition hover:bg-[var(--app-soft)] md:hidden"
+              aria-label="Open chat history"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-sm font-semibold text-[var(--app-text)] sm:text-base">
+                {agentSettings.agentName} <span className="ml-1 text-xs text-[var(--app-faint)]">⌄</span>
+              </h2>
+              <p className="truncate text-[10px] text-[var(--app-faint)]">{agentSettings.agentSubtitle}</p>
+            </div>
+
+            {userProfile && <UsageCounter profile={userProfile} />}
+
+            <ThemeToggle theme={theme} onChange={setTheme} />
+
+            <button
+              onClick={handleNewChat}
+              className="hidden items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[var(--app-text)] transition hover:bg-[var(--app-soft)] sm:inline-flex"
+            >
+              <Sparkles className="h-4 w-4 text-[#0B8B73]" />
+              New chat
+            </button>
+          </div>
+        </header>
+
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-7 pb-28 pt-3 sm:gap-8 sm:pb-32">
             <AnimatePresence>
               {messages.map((msg, idx) => (
-                <motion.div 
+                <motion.div
                   key={idx}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
-                  className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
+                  className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}
                 >
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                    msg.role === 'user' ? 'bg-gradient-to-br from-indigo-500 to-purple-600' : 'bg-gradient-to-br from-emerald-500 to-teal-600'
-                  }`}>
-                    {msg.role === 'user' ? <User className="w-5 h-5 text-white" /> : <Bot className="w-5 h-5 text-white" />}
-                  </div>
-                  
-                  <div className={`flex flex-col gap-2 max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                    {/* Role label */}
-                    <span className={`text-[10px] font-bold uppercase tracking-widest ${
-                      msg.role === 'user' ? 'text-indigo-400/60' : 'text-emerald-400/60'
-                    }`}>
-                      {msg.role === 'user' ? 'You' : 'MedBot'}
-                    </span>
-                    
-                    <div className={`px-6 py-4 rounded-2xl ${
-                      msg.role === 'user' 
-                        ? 'bg-white/10 text-white rounded-tr-none' 
-                        : 'bg-white/[0.03] border border-white/10 text-neutral-200 rounded-tl-none backdrop-blur-sm shadow-xl'
-                    }`}>
-                      {msg.role === 'user' ? (
-                        <p className="whitespace-pre-wrap leading-relaxed text-sm">{msg.content}</p>
+                  {msg.role === "assistant" && (
+                    <div className="relative mt-0.5 h-7 w-7 shrink-0 overflow-hidden rounded-full border border-[var(--app-border)] bg-[#0B8B73]">
+                      <Image
+                        src={agentSettings.profileImageUrl}
+                        alt={`${agentSettings.agentName} profile`}
+                        fill
+                        sizes="28px"
+                        className="object-cover"
+                      />
+                    </div>
+                  )}
+
+                  <div
+                    className={`flex min-w-0 flex-col gap-1.5 ${
+                      msg.role === "user" ? "items-end" : "items-start"
+                    } ${msg.role === "user" ? "max-w-[85%]" : "max-w-[calc(100%-2.5rem)] flex-1"}`}
+                  >
+                    <div
+                      className={`chat-rich text-sm leading-7 ${
+                        msg.role === "user"
+                          ? "rounded-[22px] bg-[var(--chat-user)] px-4 py-2.5 text-[var(--app-text)]"
+                          : "w-full px-0 py-0 text-[var(--app-text)]"
+                      }`}
+                    >
+                      {msg.role === "user" ? (
+                        <p className="whitespace-pre-wrap text-[15px] leading-relaxed sm:text-sm">{msg.content}</p>
                       ) : (
-                        <div className="text-sm w-full">
-                          {/* Render agent steps execution in real-time when loading/streaming */}
-                          {loading && idx === messages.length - 1 && (
-                            <ProgressiveAgentLogger steps={agentSteps} />
+                        <div className="w-full text-sm">
+                          {loading && agentStartedAt && idx === messages.length - 1 && (
+                            <ProgressiveAgentLogger steps={agentSteps} elapsedMs={agentElapsedMs} />
                           )}
 
-                          <StructuredMedicalReport text={msg.content} />
-                          
-                          {/* Needs Doctor Warning */}
-                          {msg.needs_doctor && (
-                            <div className="mt-4 bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-xl flex items-start gap-3 shadow-lg">
-                              <span className="text-lg">⚠️</span>
-                              <div>
-                                <p className="text-xs font-bold uppercase tracking-wider">Clinical Triage Alert</p>
-                                <p className="text-xs font-medium leading-relaxed mt-1">Based on these symptoms, it is highly recommended you consult a qualified medical professional immediately.</p>
-                              </div>
-                            </div>
+                          {msg.kind === "credits" ? (
+                            <CreditUpgradeMessage message={msg.content} upgradeUrl={msg.upgradeUrl} />
+                          ) : (
+                            <StructuredMedicalReport text={msg.content} />
                           )}
 
-                          {/* Retrieval Diagnostics Telemetry Panel */}
-                          {msg.diagnostics && (
-                            <DiagnosticsInspector diagnostics={msg.diagnostics} />
-                          )}
+                          {msg.diagnostics && userProfile?.user?.role === "SUPER_ADMIN" && <DiagnosticsInspector diagnostics={msg.diagnostics} />}
 
-                          {/* Symptom Follow-ups */}
-                          {msg.symptoms_to_ask && msg.symptoms_to_ask.length > 0 && (
-                            <SymptomChecklist 
-                              symptoms={msg.symptoms_to_ask} 
-                              onSymptomSubmit={(selected) => {
-                                handleSend(undefined, `I also have these symptoms: ${selected.join(', ')}`);
-                              }} 
-                              key={`checklist-${idx}`}
+                          {msg.symptoms_to_ask && msg.symptoms_to_ask.length > 0 && idx === messages.length - 1 && (
+                            <ClarificationReply
+                              questions={msg.symptoms_to_ask}
+                              onSubmit={(details) => {
+                                const originalQuestion = messages
+                                  .slice(0, idx)
+                                  .reverse()
+                                  .find((message) => message.role === "user")?.content;
+                                handleSend(undefined, details, true, originalQuestion);
+                              }}
+                              key={`clarification-${idx}`}
                             />
                           )}
                         </div>
                       )}
                     </div>
-                    
-                    {/* Sources Expander */}
+
                     {msg.sources && msg.sources.length > 0 && (
                       <details className="mt-2 w-full group">
-                        <summary className="cursor-pointer text-xs font-bold text-emerald-400/80 hover:text-emerald-400 flex items-center gap-2 transition-colors select-none">
-                          <FileText className="w-3.5 h-3.5" />
-                          {msg.sources.length} source{msg.sources.length > 1 ? 's' : ''} referenced
-                          <span className="text-neutral-600 group-open:rotate-180 transition-transform">▼</span>
+                        <summary className="flex cursor-pointer select-none items-center gap-2 text-xs font-bold text-emerald-400/80 transition-colors hover:text-emerald-400">
+                          <FileText className="h-3.5 w-3.5" />
+                          {msg.sources.length} source{msg.sources.length > 1 ? "s" : ""} referenced
+                          <span className="text-[var(--app-faint)] transition-transform group-open:rotate-180">▼</span>
                         </summary>
-                        <div className="mt-3 bg-black/40 rounded-xl border border-white/5 p-4 space-y-3 shadow-inner">
-                          {msg.sources.map((src: any, i: number) => (
-                            <div key={i} className="text-xs text-neutral-400 bg-white/5 p-3 rounded-lg border border-white/5 hover:bg-white/[0.08] transition-all">
-                              <div className="font-semibold text-neutral-300 mb-1 flex items-center gap-2">
-                                <span className="text-emerald-400 font-bold">#{i + 1}</span>
+                        <div className="mt-3 space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-glass)] p-4 shadow-inner">
+                          {msg.sources.map((src: SourceRef, i: number) => (
+                            <div
+                              key={i}
+                              className="rounded-lg border border-[var(--app-border)] bg-[var(--app-panel)] p-3 text-xs text-[var(--app-muted)] transition-all hover:bg-[var(--app-soft)]"
+                            >
+                              <div className="mb-1 flex items-center gap-2 font-semibold text-[var(--app-text)]">
+                                <span className="font-bold text-emerald-400">#{i + 1}</span>
                                 {src.file} {src.page !== "?" ? `(Page ${src.page})` : ""}
                               </div>
-                              <p className="line-clamp-3 text-neutral-500 leading-relaxed font-serif">{src.text}</p>
+                              <p className="line-clamp-3 font-serif leading-relaxed text-[var(--app-muted)]">{src.text}</p>
                             </div>
                           ))}
                         </div>
@@ -1132,27 +1447,32 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Input Area */}
-        <div className="p-6 bg-gradient-to-t from-[#0a0a0a] to-transparent z-10 pt-10">
-          <form onSubmit={handleSend} className="max-w-3xl mx-auto relative group">
-            <input 
-              type="text" 
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[var(--app-bg)] via-[var(--app-bg)] to-transparent px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-12 sm:px-6">
+          <form onSubmit={handleSend} className="pointer-events-auto relative mx-auto w-full max-w-3xl">
+            <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask a question about your documents..."
-              className="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-emerald-500/50 rounded-2xl py-4 pl-6 pr-14 text-sm text-white placeholder-neutral-500 outline-none backdrop-blur-xl transition-all shadow-2xl"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder={agentSettings.inputPlaceholder}
+              rows={1}
+              className="min-h-[3.5rem] w-full resize-none rounded-[26px] border border-[var(--app-border)] bg-[var(--chat-composer)] py-4 pl-5 pr-14 text-[15px] text-[var(--app-text)] shadow-[0_6px_22px_var(--app-shadow)] outline-none transition-all placeholder:text-[var(--app-faint)] focus:border-[var(--app-muted)]"
               disabled={loading}
             />
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={!input.trim() || loading}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 bg-emerald-500 hover:bg-emerald-400 text-black rounded-xl transition-all disabled:opacity-50 disabled:hover:bg-emerald-500 active:scale-95"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-[var(--app-text)] p-2 text-[var(--app-bg)] transition-all active:scale-95 disabled:opacity-30"
             >
-              <Send className="w-5 h-5 ml-1" />
+              <Send className="h-4 w-4" />
             </button>
           </form>
-          <p className="text-center text-xs text-neutral-600 mt-4">
-            ⚕️ AI-assisted medical research. Recommendations must be verified by a BSMS or MBBS qualified clinician.
+          <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--app-faint)] sm:text-[11px]">
+            {agentSettings.disclaimer}
           </p>
         </div>
       </main>
@@ -1165,14 +1485,14 @@ export default function Home() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-sm p-6 rounded-2xl bg-[#0d0d0d] border border-[#7A6430]/40 space-y-4 shadow-2xl text-center"
+              className="w-full max-w-sm space-y-4 rounded-2xl border border-[var(--app-border)] bg-[var(--app-raised)] p-6 text-center text-[var(--app-text)] shadow-2xl"
             >
               <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto text-red-400">
                 <Trash2 className="w-6 h-6" />
               </div>
               <div className="space-y-2">
-                <h3 className="text-lg font-bold text-[#F5F0E8]">Delete Consultation?</h3>
-                <p className="text-xs text-neutral-400">
+                <h3 className="text-lg font-bold text-[var(--app-text)]">Delete Consultation?</h3>
+                <p className="text-xs text-[var(--app-muted)]">
                   This action will permanently delete all records of this consultation and cannot be undone.
                 </p>
               </div>
@@ -1180,7 +1500,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setSessionToDelete(null)}
-                  className="flex-1 py-2 text-xs font-semibold rounded-lg bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 transition-colors"
+                  className="flex-1 rounded-lg border border-[var(--app-border)] bg-[var(--app-glass)] py-2 text-xs font-semibold text-[var(--app-muted)] transition-colors hover:bg-[var(--app-soft)]"
                 >
                   Cancel
                 </button>

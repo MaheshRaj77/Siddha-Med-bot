@@ -1,179 +1,112 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Menu, X } from "lucide-react";
-import { NAV_LINKS, EXPO_OUT } from "@/lib/constants";
+import LandingLogo from "./LandingLogo";
 
-function LogoSigil({ size = 36 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 36 36"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      {/* Hexagon */}
-      <path
-        d="M18 2L32 10V26L18 34L4 26V10L18 2Z"
-        stroke="var(--gold-primary)"
-        strokeWidth="1"
-        fill="none"
-      />
-      {/* Inner leaf vein */}
-      <path
-        d="M18 8V28M18 14L13 10M18 14L23 10M18 20L13 24M18 20L23 24M18 17L14 17M18 17L22 17"
-        stroke="var(--gold-primary)"
-        strokeWidth="0.6"
-        strokeLinecap="round"
-        opacity="0.7"
-      />
-    </svg>
-  );
-}
+const links = [
+  { label: "Features", href: "#features" },
+  { label: "How It Works", href: "#how-it-works" },
+  { label: "Use Cases", href: "#use-cases" },
+  { label: "Pricing", href: "#pricing" },
+  { label: "About Us", href: "#about" },
+];
 
 export default function Navbar() {
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const update = () => setScrolled(window.scrollY > 16);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
 
   return (
     <nav
-      className="sticky top-0 z-50 h-[72px] flex items-center border-b backdrop-blur-2xl"
-      style={{
-        background: "rgba(2,2,2,0.85)",
-        borderColor: "var(--border-subtle)",
-      }}
+      className="fixed top-4 left-0 right-0 z-50 flex flex-col items-center px-4 sm:px-6 md:px-8 transition-all duration-300"
       aria-label="Main navigation"
     >
-      <div className="mx-auto w-full max-w-[1280px] px-6 flex items-center justify-between">
-        {/* Left: Logo */}
-        <Link href="/" className="flex items-center gap-3 group" aria-label="MedBot home">
-          <LogoSigil />
-          <div className="flex flex-col">
-            <span
-              className="text-[10px] font-semibold tracking-[0.3em] uppercase"
-              style={{ color: "var(--gold-primary)" }}
-            >
-              MEDBOT
-            </span>
-          </div>
-        </Link>
+      <div
+        className={`w-full max-w-6xl rounded-full border transition-all duration-300 flex items-center justify-between px-6 sm:px-8 shadow-md ${
+          scrolled
+            ? "h-16 border-slate-200/80 bg-white/90 shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            : "h-[72px] border-slate-200/40 bg-white/75 backdrop-blur-lg"
+        }`}
+      >
+        <LandingLogo />
 
-        {/* Center: Desktop links */}
-        <div className="hidden md:flex items-center gap-8">
-          {NAV_LINKS.map((link) => (
-            <a
-              key={link.label}
+        <div className="hidden items-center gap-9 lg:flex">
+          {links.map((link) => (
+            <Link
+              key={link.href}
               href={link.href}
-              className="text-[12px] font-normal transition-colors duration-200 hover:underline hover:underline-offset-[6px] hover:decoration-1"
-              style={{
-                color: "var(--text-secondary)",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.color = "var(--gold-primary)")
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.color = "var(--text-secondary)")
-              }
+              className="text-[13px] font-semibold text-slate-700 transition-colors hover:text-[#0B8B73]"
             >
               {link.label}
-            </a>
+            </Link>
           ))}
         </div>
 
-        {/* Right */}
-        <div className="flex items-center gap-4">
-          {/* Status pill */}
-          <div
-            className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-[10px] font-semibold tracking-[0.06em]"
-            style={{
-              background: "rgba(201,168,76,0.06)",
-              border: "1px solid var(--gold-dim)",
-              borderRadius: "999px",
-              color: "var(--gold-primary)",
-            }}
-          >
-            <span
-              className="w-[6px] h-[6px] rounded-full animate-pulse-dot"
-              style={{ background: "var(--gold-primary)" }}
-            />
-            LLAMA 3.3 · LIVE
-          </div>
-
-          {/* CTA */}
+        <div className="hidden items-center gap-3 sm:flex">
           <Link
-            href="/chat"
-            className="hidden sm:inline-flex items-center text-[12px] font-semibold tracking-[0.12em] uppercase transition-all duration-250"
-            style={{
-              border: "1px solid var(--gold-primary)",
-              background: "transparent",
-              color: "var(--gold-primary)",
-              padding: "10px 24px",
-              borderRadius: "0px",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--gold-primary)";
-              e.currentTarget.style.color = "#020202";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = "var(--gold-primary)";
-            }}
-            aria-label="Enter Research Suite"
+            href="/login"
+            className="rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-800 shadow-sm transition hover:border-emerald-200 hover:text-[#0B8B73]"
           >
-            Enter Research Suite
+            Sign In
           </Link>
-
-          {/* Mobile menu toggle */}
-          <button
-            className="md:hidden p-2"
-            onClick={() => setMobileOpen(!mobileOpen)}
-            aria-label={mobileOpen ? "Close menu" : "Open menu"}
-            style={{ color: "var(--gold-primary)" }}
+          <Link
+            href="/signup"
+            className="rounded-full bg-gradient-to-r from-[#12C48B] to-[#0B8B73] px-5 py-2.5 text-sm font-bold text-white shadow-[0_10px_24px_rgba(11,139,115,0.24)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_30px_rgba(11,139,115,0.34)]"
           >
-            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
+            Get Started
+          </Link>
         </div>
+
+        <button
+          type="button"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-sm sm:hidden"
+          aria-label={open ? "Close navigation" : "Open navigation"}
+          onClick={() => setOpen((current) => !current)}
+        >
+          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
       </div>
 
-      {/* Mobile drawer */}
       <AnimatePresence>
-        {mobileOpen && (
+        {open && (
           <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.25, ease: EXPO_OUT as any }}
-            className="absolute top-[72px] left-0 w-full border-b md:hidden"
-            style={{
-              background: "rgba(2,2,2,0.95)",
-              borderColor: "var(--border-subtle)",
-            }}
+            initial={{ opacity: 0, y: -8, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.95 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="w-full max-w-6xl mt-2 rounded-[24px] border border-slate-200/80 bg-white/95 px-6 pb-6 pt-3 shadow-xl backdrop-blur-xl sm:hidden"
           >
-            <div className="px-6 py-6 flex flex-col gap-4">
-              {NAV_LINKS.map((link) => (
-                <a
-                  key={link.label}
-                  href={link.href}
-                  onClick={() => setMobileOpen(false)}
-                  className="text-[13px] font-normal py-2"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  {link.label}
-                </a>
-              ))}
+            {links.map((link) => (
               <Link
-                href="/chat"
-                onClick={() => setMobileOpen(false)}
-                className="mt-2 text-center text-[12px] font-semibold tracking-[0.12em] uppercase py-3"
-                style={{
-                  border: "1px solid var(--gold-primary)",
-                  color: "var(--gold-primary)",
-                }}
+                key={link.href}
+                href={link.href}
+                onClick={() => setOpen(false)}
+                className="block border-b border-slate-100 py-3.5 text-sm font-semibold text-slate-700 hover:text-[#0B8B73] transition-colors"
               >
-                Enter Research Suite
+                {link.label}
+              </Link>
+            ))}
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <Link
+                href="/login"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-center text-sm font-bold text-slate-800 hover:bg-slate-50 transition-colors"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/signup"
+                className="rounded-xl bg-gradient-to-r from-[#12C48B] to-[#0B8B73] px-4 py-3 text-center text-sm font-bold text-white shadow-sm"
+              >
+                Get Started
               </Link>
             </div>
           </motion.div>

@@ -1,14 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { Loader2, Eye, EyeOff, ArrowRight, CheckCircle2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowRight, CheckCircle2, Eye, EyeOff, Loader2, LockKeyhole, Mail, UserRound } from "lucide-react";
+import AuthShell from "@/components/product/AuthShell";
+import { useProductTheme } from "@/components/product/ProductTheme";
 
 export default function SignupPage() {
   const router = useRouter();
-
+  const { theme, setTheme } = useProductTheme();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -17,309 +19,119 @@ export default function SignupPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
 
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSignup = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError("");
     setLoading(true);
 
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters");
+    if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+      setError("Use at least 12 characters with uppercase, lowercase, a number, and a symbol");
       setLoading(false);
       return;
     }
 
     try {
-      const res = await fetch("/api/auth/signup", {
+      const response = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, name }),
       });
-      const data = await res.json();
+      const data = await response.json();
 
-      if (!res.ok) {
+      if (!response.ok) {
         setError(data.error || "Signup failed");
         return;
       }
 
       setSuccess(true);
-
-      // If session exists (email confirmation disabled), redirect
       setTimeout(() => {
         router.push("/login");
         router.refresh();
       }, 2000);
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
   };
 
-  if (success) {
-    return (
-      <div
-        className="min-h-screen flex items-center justify-center px-4"
-        style={{ background: "var(--bg-void)" }}
-      >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="text-center max-w-[400px]"
-        >
-          <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-6"
-            style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)" }}>
-            <CheckCircle2 size={28} style={{ color: "#22c55e" }} />
-          </div>
-          <h2 className="text-[24px] font-bold" style={{ color: "var(--text-primary)" }}>
-            Account created!
-          </h2>
-          <p className="text-[13px] font-light mt-3" style={{ color: "var(--text-secondary)" }}>
-            Redirecting you to login...
-          </p>
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4"
-      style={{ background: "var(--bg-void)" }}
+    <AuthShell
+      theme={theme}
+      onThemeChange={setTheme}
+      eyebrow="Create your workspace"
+      title={success ? "Account created" : "Start exploring with MedBot"}
+      description={success ? "Your workspace is ready. We are redirecting you to sign in." : "Create your research workspace and begin exploring curated Siddha knowledge with visible sources."}
+      footer={
+        <>
+          Already have an account?{" "}
+          <Link href="/login" className="font-extrabold text-[#0B8B73] transition hover:text-[#12C48B]">Sign in</Link>
+        </>
+      }
     >
-      {/* Ambient halo */}
-      <div
-        className="fixed pointer-events-none"
-        style={{
-          top: "30%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          width: 600,
-          height: 600,
-          borderRadius: "50%",
-          background: "var(--gold-glow)",
-          filter: "blur(180px)",
-          opacity: 0.3,
-        }}
-      />
-
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        className="relative z-10 w-full max-w-[420px]"
-      >
-        {/* Logo */}
-        <div className="text-center mb-10">
-          <Link href="/" className="inline-block">
-            <svg width="44" height="44" viewBox="0 0 36 36" fill="none">
-              <path
-                d="M18 2L32 10V26L18 34L4 26V10L18 2Z"
-                stroke="var(--gold-primary)"
-                strokeWidth="1"
-                fill="none"
-              />
-              <path
-                d="M18 8V28M18 14L13 10M18 14L23 10M18 20L13 24M18 20L23 24"
-                stroke="var(--gold-primary)"
-                strokeWidth="0.6"
-                strokeLinecap="round"
-                opacity="0.7"
-              />
-            </svg>
-          </Link>
-          <h1
-            className="text-[28px] font-extrabold tracking-[-0.02em] mt-4"
-            style={{ color: "var(--text-primary)" }}
-          >
-            Create account
-          </h1>
-          <p
-            className="text-[13px] font-light mt-2"
-            style={{ color: "var(--text-tertiary)" }}
-          >
-            Start your Siddha clinical research today
-          </p>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleSignup} className="space-y-5">
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="p-3 text-[12px] font-medium"
-              style={{
-                background: "rgba(239,68,68,0.08)",
-                border: "1px solid rgba(239,68,68,0.2)",
-                color: "#f87171",
-                borderRadius: 4,
-              }}
-            >
-              {error}
-            </motion.div>
-          )}
-
-          {/* Name */}
-          <div>
-            <label
-              className="block text-[10px] font-semibold tracking-[0.12em] uppercase mb-2"
-              style={{ color: "var(--text-tertiary)" }}
-            >
-              Full Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Dr. Rajan Kumar"
-              className="w-full px-4 py-3 text-[14px] font-light outline-none transition-all duration-200"
-              style={{
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-subtle)",
-                color: "var(--text-primary)",
-                borderRadius: 2,
-              }}
-              onFocus={(e) =>
-                (e.target.style.borderColor = "var(--gold-primary)")
-              }
-              onBlur={(e) =>
-                (e.target.style.borderColor = "var(--border-subtle)")
-              }
-            />
-          </div>
-
-          {/* Email */}
-          <div>
-            <label
-              className="block text-[10px] font-semibold tracking-[0.12em] uppercase mb-2"
-              style={{ color: "var(--text-tertiary)" }}
-            >
-              Email Address
-            </label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="doctor@clinic.org"
-              className="w-full px-4 py-3 text-[14px] font-light outline-none transition-all duration-200"
-              style={{
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-subtle)",
-                color: "var(--text-primary)",
-                borderRadius: 2,
-              }}
-              onFocus={(e) =>
-                (e.target.style.borderColor = "var(--gold-primary)")
-              }
-              onBlur={(e) =>
-                (e.target.style.borderColor = "var(--border-subtle)")
-              }
-            />
-          </div>
-
-          {/* Password */}
-          <div>
-            <label
-              className="block text-[10px] font-semibold tracking-[0.12em] uppercase mb-2"
-              style={{ color: "var(--text-tertiary)" }}
-            >
-              Password
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min 6 characters"
-                className="w-full px-4 py-3 pr-12 text-[14px] font-light outline-none transition-all duration-200"
-                style={{
-                  background: "var(--bg-surface)",
-                  border: "1px solid var(--border-subtle)",
-                  color: "var(--text-primary)",
-                  borderRadius: 2,
-                }}
-                onFocus={(e) =>
-                  (e.target.style.borderColor = "var(--gold-primary)")
-                }
-                onBlur={(e) =>
-                  (e.target.style.borderColor = "var(--border-subtle)")
-                }
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2"
-                style={{ color: "var(--text-tertiary)" }}
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Role Info */}
-          <div
-            className="p-3 text-[11px] font-light leading-[1.7]"
-            style={{
-              background: "rgba(201,168,76,0.04)",
-              borderLeft: "2px solid var(--gold-dim)",
-              color: "var(--text-secondary)",
-            }}
-          >
-            You&apos;ll be registered as a <strong style={{ color: "var(--gold-primary)" }}>User</strong>.
-            Contact your Super Admin to be promoted to a Doctor (Admin) role.
-          </div>
-
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-2 py-3.5 text-[13px] font-bold tracking-[0.08em] uppercase transition-all duration-200 disabled:opacity-60"
-            style={{
-              background: "var(--gold-primary)",
-              color: "#020202",
-              borderRadius: 0,
-            }}
-            onMouseEnter={(e) => {
-              if (!loading)
-                e.currentTarget.style.background = "var(--gold-bright)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "var(--gold-primary)";
-            }}
-          >
-            {loading ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <>
-                Create Account <ArrowRight size={14} />
-              </>
+      {success ? (
+        <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-6 text-center">
+          <CheckCircle2 className="mx-auto h-11 w-11 text-[#0B8B73]" />
+          <p className="mt-4 text-sm font-bold text-[var(--app-text)]">Welcome to Siddha MedBot.</p>
+          <p className="mt-1 text-xs text-[var(--app-muted)]">Taking you to the sign-in page...</p>
+        </motion.div>
+      ) : (
+        <form onSubmit={handleSignup} className="space-y-4">
+          <AnimatePresence>
+            {error && (
+              <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="rounded-xl border border-red-400/25 bg-red-400/10 px-3 py-2.5 text-xs font-semibold text-red-500">
+                {error}
+              </motion.p>
             )}
+          </AnimatePresence>
+          <AuthInput icon={UserRound} label="Full name" value={name} onChange={setName} placeholder="Dr. Rajan Kumar" />
+          <AuthInput icon={Mail} label="Email address" value={email} onChange={setEmail} placeholder="doctor@clinic.org" type="email" required />
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.14em] text-[var(--app-muted)]">Password</span>
+            <span className="relative block">
+              <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-faint)]" />
+              <input className="product-input pr-12" type={showPassword ? "text" : "password"} required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="12+ characters with mixed types" />
+              <button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--app-muted)]" aria-label={showPassword ? "Hide password" : "Show password"}>
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </span>
+          </label>
+          <p className="rounded-xl border border-emerald-400/20 bg-emerald-400/[0.08] px-3 py-2.5 text-[11px] leading-5 text-[var(--app-muted)]">
+            Your account starts as a researcher workspace. An administrator can enable practitioner access when needed.
+          </p>
+          <button type="submit" disabled={loading} className="product-primary-button">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Create account <ArrowRight className="h-4 w-4" /></>}
           </button>
         </form>
+      )}
+    </AuthShell>
+  );
+}
 
-        {/* Footer */}
-        <p
-          className="text-center text-[12px] mt-8"
-          style={{ color: "var(--text-tertiary)" }}
-        >
-          Already have an account?{" "}
-          <Link
-            href="/login"
-            className="font-semibold transition-colors duration-200"
-            style={{ color: "var(--gold-primary)" }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.color = "var(--gold-bright)")
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.color = "var(--gold-primary)")
-            }
-          >
-            Sign in →
-          </Link>
-        </p>
-      </motion.div>
-    </div>
+function AuthInput({
+  icon: Icon,
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  required = false,
+}: {
+  icon: typeof UserRound;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  type?: string;
+  required?: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.14em] text-[var(--app-muted)]">{label}</span>
+      <span className="relative block">
+        <Icon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-faint)]" />
+        <input className="product-input" type={type} required={required} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      </span>
+    </label>
   );
 }

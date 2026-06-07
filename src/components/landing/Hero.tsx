@@ -1,367 +1,201 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight } from "lucide-react";
-import { TERMINAL_LINES, EXPO_OUT } from "@/lib/constants";
+import {
+  ArrowRight,
+  Bot,
+  Check,
+  FileCheck2,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  User,
+} from "lucide-react";
+import heroChatgpt from "../../../public/hero-chatgpt.png";
 
-/* ── Typewriter Terminal ──────────────────────────────────── */
-function TypewriterTerminal() {
-  const [displayedLines, setDisplayedLines] = useState<
-    { text: string; color: string }[]
-  >([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
+const ease = [0.16, 1, 0.3, 1] as const;
 
-  useEffect(() => {
-    let lineIdx = 0;
-    let charIdx = 0;
-    let currentLineText = "";
-    let isMounted = true;
+const pills = [
+  { icon: FileCheck2, label: "Accurate Citations", tone: "text-blue-600 bg-blue-50" },
+  { icon: Sparkles, label: "Evidence Based", tone: "text-violet-600 bg-violet-50" },
+  { icon: ShieldCheck, label: "Secure & Private", tone: "text-teal-600 bg-cyan-50" },
+];
 
-    function typeNext() {
-      if (!isMounted) return;
-      if (lineIdx >= TERMINAL_LINES.length) return;
-
-      const line = TERMINAL_LINES[lineIdx];
-      if (charIdx < line.text.length) {
-        currentLineText += line.text[charIdx];
-        charIdx++;
-
-        setDisplayedLines((prev) => {
-          const next = [...prev];
-          if (next.length <= lineIdx) {
-            next.push({ text: currentLineText, color: line.color });
-          } else {
-            next[lineIdx] = { text: currentLineText, color: line.color };
-          }
-          return next;
-        });
-
-        setTimeout(typeNext, 25);
-      } else {
-        // Line complete
-        lineIdx++;
-        charIdx = 0;
-        currentLineText = "";
-        setTimeout(typeNext, 350);
-      }
-    }
-
-    const timer = setTimeout(typeNext, 600);
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [displayedLines]);
-
-  const colorMap: Record<string, string> = {
-    dim: "var(--text-tertiary)",
-    gold: "var(--gold-primary)",
-    bright: "var(--text-primary)",
-  };
-
+function ChatWidget({ className }: { className?: string }) {
   return (
-    <div
-      ref={scrollRef}
-      className="p-5 font-[family-name:var(--font-jetbrains)] text-[12px] leading-[1.8] overflow-y-auto"
-      style={{ height: "calc(100% - 32px)" }}
+    <motion.div
+      animate={{ y: [0, -7, 0] }}
+      transition={{ duration: 5.2, repeat: Infinity, ease: "easeInOut" }}
+      className={`relative overflow-hidden rounded-[24px] border border-white/65 bg-white/[0.16] p-3.5 shadow-[0_22px_65px_rgba(10,74,130,0.2),inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-1px_0_rgba(255,255,255,0.22)] backdrop-blur-[16px] backdrop-saturate-[1.35] sm:p-4 ${className || ""}`}
     >
-      {displayedLines.map((line, i) => (
-        <div
-          key={i}
-          style={{
-            color: colorMap[line.color] || "var(--text-tertiary)",
-            fontWeight: line.color === "bright" ? 600 : 400,
-            fontSize: i === TERMINAL_LINES.length - 1 && line.color === "gold" ? "10px" : undefined,
-          }}
-        >
-          {line.text}
-          {i === displayedLines.length - 1 && (
-            <span
-              className="inline-block w-[7px] h-[14px] ml-1 align-middle animate-pulse-dot"
-              style={{ background: "var(--gold-primary)" }}
-            />
-          )}
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.52)_0%,rgba(255,255,255,0.08)_48%,rgba(103,232,249,0.08)_100%)]" />
+      <div className="pointer-events-none absolute -right-20 -top-24 h-52 w-52 rounded-full bg-white/35 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-16 -left-12 h-36 w-44 rounded-full bg-cyan-100/18 blur-3xl" />
+      <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
+
+      <div className="relative flex items-center justify-between border-b border-white/45 pb-2.5">
+        <div className="flex items-center gap-2">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/60 bg-white/[0.24] text-[#0B8B73] shadow-sm backdrop-blur">
+            <Bot className="h-4 w-4" />
+          </span>
+          <span>
+            <span className="block text-[12px] font-extrabold text-slate-900">Siddha MedBot</span>
+            <span className="flex items-center gap-1 text-[9px] font-bold text-[#0B8B73]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#12C48B]" />
+              Online
+            </span>
+          </span>
         </div>
-      ))}
-    </div>
+        <Sparkles className="h-4 w-4 text-[#1F6FFF]" />
+      </div>
+
+      <div className="relative space-y-2.5 py-2.5">
+        <div className="flex justify-end gap-2">
+          <div className="max-w-[84%] rounded-xl rounded-tr-sm border border-white/45 bg-white/[0.18] px-2.5 py-2 text-[9px] font-semibold leading-3.5 text-slate-800 shadow-sm backdrop-blur-md sm:text-[10px]">
+            What are the Siddha treatments for Vatha Pitha imbalance with joint pain?
+          </div>
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/50 bg-white/[0.22] shadow-sm backdrop-blur">
+            <User className="h-3 w-3 text-orange-600" />
+          </span>
+        </div>
+
+        <div className="rounded-xl border border-white/60 bg-white/[0.22] p-2.5 shadow-[0_8px_24px_rgba(15,78,130,0.08),inset_0_1px_0_rgba(255,255,255,0.62)] backdrop-blur-lg">
+          <p className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-900">
+            <ShieldCheck className="h-3.5 w-3.5 text-[#0B8B73]" />
+            Based on 15 trusted sources
+          </p>
+          <p className="mt-1.5 text-[9px] font-semibold text-slate-600">
+            Recommended Siddha treatments include:
+          </p>
+          <ul className="mt-1.5 space-y-1 text-[9px] font-semibold text-slate-700">
+            {["Kaba Suranam", "Thirikadugu Chooranam", "Muppu preparations", "External therapies: Pizhichil, Thailam"].map((item) => (
+              <li key={item} className="flex items-center gap-1">
+                <Check className="h-3 w-3 shrink-0 text-[#0B8B73]" />
+                {item}
+              </li>
+            ))}
+          </ul>
+          <button className="mt-2 rounded-md border border-white/50 bg-white/[0.18] px-2 py-1 text-[9px] font-bold text-slate-700 shadow-sm backdrop-blur">
+            View Sources (15) ›
+          </button>
+        </div>
+      </div>
+
+      <div className="relative flex items-center gap-2 rounded-full border border-white/60 bg-white/[0.16] px-3 py-2 text-[9px] text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.66)] backdrop-blur-lg">
+        <span className="flex-1">Ask any Siddha medical question...</span>
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0B8B73] text-white">
+          <Send className="h-3 w-3" />
+        </span>
+      </div>
+    </motion.div>
   );
 }
 
-/* ── Stagger config ──────────────────────────────────────── */
-const stagger = {
-  hidden: {},
-  visible: {
-    transition: { staggerChildren: 0.08 },
-  },
-};
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 40 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.7, ease: EXPO_OUT as any },
-  },
-};
-
-/* ── Hero Component ──────────────────────────────────────── */
 export default function Hero() {
   return (
-    <section
-      className="relative min-h-screen flex items-center overflow-hidden"
-      style={{ background: "var(--bg-void)" }}
-      id="intelligence"
-    >
-      {/* Ambient halos */}
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          top: "10%",
-          left: "-5%",
-          width: 800,
-          height: 800,
-          borderRadius: "50%",
-          background: "var(--gold-glow)",
-          filter: "blur(200px)",
-          opacity: 0.6,
-        }}
+    <section className="relative isolate overflow-hidden bg-[#EDF6FF]">
+      <Image
+        src={heroChatgpt}
+        alt=""
+        fill
+        priority
+        sizes="100vw"
+        className="hidden object-cover object-center lg:block"
       />
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          bottom: "-10%",
-          right: "-5%",
-          width: 600,
-          height: 600,
-          borderRadius: "50%",
-          background: "rgba(201,168,76,0.06)",
-          filter: "blur(180px)",
-        }}
-      />
+      <div className="absolute inset-y-0 left-0 hidden w-[57%] bg-gradient-to-r from-white/96 via-white/82 to-transparent lg:block" />
+      <div className="absolute inset-y-0 left-0 hidden w-[42%] bg-[radial-gradient(circle_at_20%_45%,rgba(255,255,255,0.94),transparent_72%)] lg:block" />
 
-      {/* Dot grid */}
-      <div className="absolute inset-0 dot-grid pointer-events-none" />
+      <div className="relative mx-auto max-w-[1440px] px-5 pt-28 pb-10 sm:px-8 sm:pt-32 sm:pb-12 lg:min-h-[650px] lg:px-12 lg:pt-36 lg:pb-12">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.75, ease }}
+          className="relative z-10 max-w-[470px] lg:pt-7"
+        >
+          <span className="mb-4 inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-white/85 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.15em] text-[#0B8B73] shadow-sm backdrop-blur">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#12C48B] shadow-[0_0_0_4px_rgba(18,196,139,0.15)]" />
+            Curated Siddha Intelligence
+          </span>
 
-      {/* Content */}
-      <motion.div
-        variants={stagger}
-        initial="hidden"
-        animate="visible"
-        className="relative z-10 mx-auto w-full max-w-[1280px] px-6 grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-6 items-center py-24 lg:py-0"
-      >
-        {/* ── Left Column ─────────────────────────────────── */}
-        <div className="max-w-[640px]">
-          {/* Eyebrow */}
-          <motion.div variants={fadeUp} className="flex items-center gap-3 mb-10">
-            <span
-              className="block h-[1px] animate-eyebrow-rule"
-              style={{ background: "var(--gold-dim)", width: 40 }}
-            />
-            <span
-              className="text-[10px] font-semibold tracking-[0.2em] uppercase"
-              style={{ color: "var(--gold-primary)" }}
-            >
-              SIDDHA · BOTANICAL · RAG ENGINE
+          <h1 className="text-[50px] font-black leading-[0.98] tracking-[-0.065em] text-slate-950 sm:text-[62px] lg:text-[66px]">
+            Trusted Siddha
+            <br />
+            Knowledge.
+            <br />
+            <span className="bg-gradient-to-r from-[#0B8B73] to-[#12C48B] bg-clip-text text-transparent">
+              In Seconds.
             </span>
-          </motion.div>
+          </h1>
 
-          {/* Headline */}
-          <motion.h1 variants={fadeUp} className="mb-0">
-            <span
-              className="block font-black tracking-[-0.04em] leading-[0.95]"
-              style={{
-                fontSize: "clamp(52px, 7vw, 88px)",
-                color: "var(--text-primary)",
-              }}
-            >
-              Ancient Wisdom.
-            </span>
-            <span
-              className="block font-black tracking-[-0.04em] leading-[0.95] mt-1"
-              style={{
-                fontSize: "clamp(52px, 7vw, 88px)",
-                WebkitTextStroke: "1px rgba(201,168,76,0.6)",
-                color: "transparent",
-              }}
-            >
-              Silicon Precision.
-            </span>
-          </motion.h1>
+          <p className="mt-5 max-w-[410px] text-[15px] leading-6 text-slate-700 sm:text-[16px]">
+            AI-powered medical assistant that delivers accurate, source-grounded
+            answers from curated Siddha knowledge.
+          </p>
 
-          {/* Sub-headline */}
-          <motion.p
-            variants={fadeUp}
-            className="mt-8 max-w-[480px] text-[18px] md:text-[22px] font-light leading-[1.7]"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            MedBot synthesizes Siddha pharmacopoeia at machine speed —
-            hybrid retrieval, zero hallucination, built for the clinic.
-          </motion.p>
+          <div className="mt-5 flex max-w-[430px] flex-wrap gap-2">
+            {pills.map(({ icon: Icon, label, tone }, index) => (
+              <motion.div
+                key={label}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.28 + index * 0.07, duration: 0.45 }}
+                className="flex items-center gap-2 rounded-xl border border-white bg-white/85 px-3 py-2 text-[10px] font-bold text-slate-800 shadow-[0_8px_22px_rgba(15,23,42,0.08)] backdrop-blur"
+              >
+                <span className={`flex h-6 w-6 items-center justify-center rounded-lg ${tone}`}>
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+                {label}
+              </motion.div>
+            ))}
+          </div>
 
-          {/* CTAs */}
-          <motion.div variants={fadeUp} className="mt-12 flex flex-wrap gap-4">
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <Link
-              href="/chat"
-              className="inline-flex items-center gap-2 text-[13px] font-bold tracking-[0.08em] uppercase transition-all duration-250"
-              style={{
-                background: "var(--gold-primary)",
-                color: "#020202",
-                padding: "16px 36px",
-                borderRadius: 0,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--gold-bright)";
-                e.currentTarget.style.boxShadow =
-                  "0 0 40px rgba(201,168,76,0.3)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "var(--gold-primary)";
-                e.currentTarget.style.boxShadow = "none";
-              }}
-              aria-label="Begin Clinical Search"
+              href="/signup"
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#12C48B] to-[#0B8B73] px-6 py-3.5 text-[13px] font-bold text-white shadow-[0_13px_26px_rgba(11,139,115,0.25)] transition hover:-translate-y-0.5 hover:shadow-[0_17px_32px_rgba(11,139,115,0.34)]"
             >
-              Begin Clinical Search
-              <ArrowRight size={15} />
+              Try MedBot Free <ArrowRight className="h-4 w-4" />
             </Link>
-            <a
-              href="#architecture"
-              className="inline-flex items-center text-[13px] font-bold tracking-[0.08em] uppercase transition-all duration-250"
-              style={{
-                border: "1px solid var(--border-active)",
-                color: "var(--text-secondary)",
-                padding: "16px 36px",
-                borderRadius: 0,
-                background: "transparent",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "var(--gold-primary)";
-                e.currentTarget.style.color = "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "var(--border-active)";
-                e.currentTarget.style.color = "var(--text-secondary)";
-              }}
+            <Link
+              href="#demo"
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-6 py-3.5 text-[13px] font-bold text-slate-900 shadow-[0_8px_22px_rgba(15,23,42,0.07)] transition hover:-translate-y-0.5 hover:border-emerald-200"
             >
-              View Architecture
-            </a>
-          </motion.div>
+              Book a Demo
+            </Link>
+          </div>
 
-          {/* Trust micro-copy */}
-          <motion.div
-            variants={fadeUp}
-            className="mt-6 flex flex-wrap gap-6 text-[10px] font-normal tracking-[0.1em]"
-            style={{ color: "var(--text-tertiary)" }}
-          >
-            <span>✦ BSMS Compliant</span>
-            <span>✦ 0.00% Hallucination Rate</span>
-            <span>✦ 118ms Retrieval</span>
-          </motion.div>
+          <p className="mt-5 text-[11px] font-semibold text-slate-600">
+            Built for <span className="text-slate-950">Siddha Practitioners</span>
+            <span className="mx-1.5 text-[#0B8B73]">•</span>
+            <span className="text-slate-950">Students</span>
+            <span className="mx-1.5 text-[#0B8B73]">•</span>
+            <span className="text-slate-950">Researchers</span>
+          </p>
+        </motion.div>
+
+        <div className="absolute right-[3.5%] top-1/2 z-10 hidden w-[365px] -translate-y-1/2 lg:block xl:right-[5%]">
+          <ChatWidget />
         </div>
 
-        {/* ── Right Column: Terminal Card ─────────────────── */}
-        <motion.div variants={fadeUp} className="relative flex justify-center lg:justify-end">
-          <div className="relative w-full max-w-[560px]">
-            {/* Terminal card */}
-            <div
-              className="relative overflow-hidden"
-              style={{
-                background: "#0A0A0A",
-                border: "1px solid rgba(201,168,76,0.15)",
-                borderRadius: 4,
-                boxShadow:
-                  "0 40px 120px rgba(0,0,0,0.8), 0 0 0 1px rgba(201,168,76,0.05)",
-                height: 380,
-              }}
-            >
-              {/* Header bar */}
-              <div
-                className="flex items-center justify-between px-4"
-                style={{
-                  height: 32,
-                  background: "#0F0F0F",
-                  borderBottom: "1px solid rgba(201,168,76,0.08)",
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="w-[6px] h-[6px] rounded-full" style={{ background: "#2A2A2A" }} />
-                  <span className="w-[6px] h-[6px] rounded-full" style={{ background: "#2A2A2A" }} />
-                  <span className="w-[6px] h-[6px] rounded-full" style={{ background: "var(--gold-dim)" }} />
-                </div>
-                <span
-                  className="text-[9px] font-semibold tracking-[0.2em] uppercase"
-                  style={{ color: "var(--text-tertiary)" }}
-                >
-                  MEDBOT · RAG TERMINAL
-                </span>
-              </div>
-
-              {/* Terminal body */}
-              <TypewriterTerminal />
-            </div>
-
-            {/* Floating stat chips */}
-            <div
-              className="absolute animate-float-a hidden sm:block"
-              style={{
-                bottom: -20,
-                left: -20,
-                background: "var(--bg-surface)",
-                border: "1px solid var(--gold-dim)",
-                borderRadius: 2,
-                padding: "16px 20px",
-                zIndex: 20,
-              }}
-            >
-              <div
-                className="text-[24px] font-black"
-                style={{ color: "var(--gold-primary)" }}
-              >
-                0.9845
-              </div>
-              <div
-                className="text-[9px] font-semibold tracking-[0.12em] uppercase mt-1"
-                style={{ color: "var(--text-tertiary)" }}
-              >
-                Cohere Score
-              </div>
-            </div>
-
-            <div
-              className="absolute animate-float-b hidden sm:block"
-              style={{
-                top: -20,
-                right: -20,
-                background: "var(--bg-surface)",
-                border: "1px solid var(--gold-dim)",
-                borderRadius: 2,
-                padding: "16px 20px",
-                zIndex: 20,
-              }}
-            >
-              <div
-                className="text-[24px] font-black"
-                style={{ color: "var(--gold-primary)" }}
-              >
-                118ms
-              </div>
-              <div
-                className="text-[9px] font-semibold tracking-[0.12em] uppercase mt-1"
-                style={{ color: "var(--text-tertiary)" }}
-              >
-                Retrieval Time
-              </div>
-            </div>
-          </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.75, delay: 0.16, ease }}
+          className="relative mt-8 h-[495px] overflow-hidden rounded-[26px] border border-white/70 shadow-[0_24px_60px_rgba(15,78,130,0.2)] lg:hidden"
+        >
+          <Image
+            src={heroChatgpt}
+            alt="Siddha doctor using an AI tablet beside a holographic anatomy display and traditional herbs"
+            fill
+            priority
+            sizes="(max-width: 1024px) 100vw, 0vw"
+            className="object-cover object-[57%_center]"
+          />
+          <ChatWidget className="absolute inset-x-3 bottom-3" />
         </motion.div>
-      </motion.div>
+      </div>
     </section>
   );
 }

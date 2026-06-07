@@ -1,39 +1,43 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Users, Settings, BarChart3, Shield, Crown,
+  Users, Settings, BarChart3, Shield,
   UserCheck, UserX, ChevronDown, ChevronUp,
-  RefreshCw, Loader2, LogOut, ArrowLeft,
+  RefreshCw, Loader2,
   Trash2, Activity, Gauge, Save, Database,
   MessageSquare, FileText, Clock, Zap, HardDrive,
-  Search, AlertTriangle, UploadCloud, Link as LinkIcon,
-  Sparkles, CheckCircle2
+  Search, UploadCloud,
+  Sparkles, CheckCircle2, CreditCard, AlertTriangle
 } from "lucide-react";
-import Link from "next/link";
+import Image from "next/image";
+import type { PublicPricingPlan } from "@/lib/billing/pricing";
+import { DashboardShell } from "@/components/product/DashboardShell";
+import { AnalyticsDashboard } from "@/components/admin/AnalyticsDashboard";
 
 interface UserRow {
   id: string;
   email: string;
   name: string | null;
   role: "SUPER_ADMIN" | "ADMIN" | "USER";
+  planSlug: string;
   isActive: boolean;
   createdAt: string;
   totalQueries: number;
   totalSessions: number;
   todayQueries: number;
   monthlyQueries: number;
-}
-
-interface QuotaRow {
-  role: string;
-  dailyQueryLimit: number;
-  monthlyQueryLimit: number;
-  maxFileUploads: number;
-  id: string | null;
+  credits?: {
+    dailyLimit: number;
+    monthlyLimit: number;
+    monthlyAdjustment: number;
+    todayUsed: number;
+    monthlyUsed: number;
+    todayRemaining: number;
+    monthlyRemaining: number;
+  };
 }
 
 interface Stats {
@@ -42,6 +46,24 @@ interface Stats {
   adminCount: number;
   totalQueries: number;
   todayQueries: number;
+  revenue?: {
+    paidAmountMinor: number;
+    pendingAmountMinor: number;
+    paidTransactions: number;
+    estimatedAiCostMinor: number;
+    estimatedGrossProfitMinor: number;
+    averageCostPerAnswerMinor: number;
+    totalTokens: number;
+    byPlan: Array<{
+      planSlug: string;
+      paidAmountMinor: number;
+      estimatedAiCostMinor: number;
+      estimatedGrossProfitMinor: number;
+      paidTransactions: number;
+      answers: number;
+      tokens: number;
+    }>;
+  };
   weeklyUsage: { date: string; count: number }[];
   roleDistribution: { role: string; count: number }[];
 }
@@ -60,6 +82,22 @@ interface Document {
   chunkCount: number;
   ids: string[];
   sampleText: string;
+  source: "chroma" | "postgres";
+  type: string | null;
+  sourceUrl: string | null;
+  documentHash: string | null;
+  version: number;
+  isActive: boolean;
+  ingested: string | null;
+  updatedAt: string | null;
+}
+
+interface IngestionJobRow {
+  id: string;
+  fileName: string;
+  status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | string;
+  chunksCount: number;
+  error: string | null;
 }
 
 interface AdminStats {
@@ -75,7 +113,106 @@ interface EvaluationRun {
   answerRelevance: number;
   contextPrecision: number;
   overallScore: number;
-  details: string;
+  details: unknown;
+}
+
+interface EvaluationEngineSnapshot {
+  activeChunks: number;
+  sourceDocuments: number;
+  pendingJobs: number;
+  processingJobs: number;
+  staticCases: number;
+  syntheticSeedChunks: number;
+  latestRun?: {
+    id: string;
+    timestamp: string;
+    overallScore: number;
+  } | null;
+}
+
+interface AgentSettings {
+  agentName: string;
+  agentSubtitle: string;
+  profileImageUrl: "/bot-profile.png";
+  welcomeMessage: string;
+  inputPlaceholder: string;
+  disclaimer: string;
+  followUpQuestionsEnabled: boolean;
+}
+
+interface AuthUser {
+  id: string;
+  email: string;
+  role: "SUPER_ADMIN" | "ADMIN" | "USER";
+}
+
+interface HealthData {
+  dbHealth: "healthy" | "unhealthy" | string;
+  redisHealth: "healthy" | "unhealthy" | string;
+  queueStats: {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+  };
+}
+
+interface PromoCode {
+  id: string;
+  code: string;
+  description: string;
+  discountPercent: number;
+  applicablePlanSlugs: string[];
+  maxUses: number | null;
+  usedCount: number;
+  expiresAt: string | null;
+  isActive: boolean;
+}
+
+const EMPTY_PROMO_CODE: Omit<PromoCode, "id" | "usedCount"> = {
+  code: "",
+  description: "",
+  discountPercent: 10,
+  applicablePlanSlugs: [],
+  maxUses: null,
+  expiresAt: null,
+  isActive: true,
+};
+
+const DEFAULT_AGENT_SETTINGS: AgentSettings = {
+  agentName: "Siddha MedBot",
+  agentSubtitle: "Medical Research Assistant",
+  profileImageUrl: "/bot-profile.png",
+  welcomeMessage:
+    "Hey there! I'm **Siddha MedBot**, your Medical Research Assistant.\n\nI can help you explore and understand the curated resources in the Knowledge Base. You can ask me anything about Siddha medicine, treatments, and clinical studies covered by those sources.\n\n*Tip: Neenga Tanglish-la kooda kelvi kekalam! I understand and speak Tanglish fluently.*\n\nWhat would you like to explore today?",
+  inputPlaceholder: "Ask anything about Siddha medicine",
+  disclaimer:
+    "AI can make mistakes. Please verify important medical information with a qualified practitioner.",
+  followUpQuestionsEnabled: true,
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function formatMinor(amountMinor: number, currency: string) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: amountMinor % 100 === 0 ? 0 : 2,
+  }).format(amountMinor / 100);
+}
+
+function normalizeAgentSettings(settings: Partial<AgentSettings> | null | undefined): AgentSettings {
+  return {
+    agentName: settings?.agentName || DEFAULT_AGENT_SETTINGS.agentName,
+    agentSubtitle: settings?.agentSubtitle || DEFAULT_AGENT_SETTINGS.agentSubtitle,
+    profileImageUrl: "/bot-profile.png",
+    welcomeMessage: settings?.welcomeMessage || DEFAULT_AGENT_SETTINGS.welcomeMessage,
+    inputPlaceholder: settings?.inputPlaceholder || DEFAULT_AGENT_SETTINGS.inputPlaceholder,
+    disclaimer: settings?.disclaimer || DEFAULT_AGENT_SETTINGS.disclaimer,
+    followUpQuestionsEnabled: settings?.followUpQuestionsEnabled ?? DEFAULT_AGENT_SETTINGS.followUpQuestionsEnabled,
+  };
 }
 
 const ROLE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -86,22 +223,28 @@ const ROLE_LABELS: Record<string, { label: string; color: string; bg: string }> 
 
 export default function SuperAdminPage() {
   const router = useRouter();
-  const supabase = createClient();
 
   const [activeTab, setActiveTab] = useState<
-    "overview" | "users" | "quotas" | "documents" | "logs" | "evaluations"
+    "overview" | "analytics" | "users" | "pricing" | "agent" | "documents" | "logs" | "evaluations" | "health"
   >("overview");
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
-  const [quotas, setQuotas] = useState<QuotaRow[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
-  const [savingQuota, setSavingQuota] = useState<string | null>(null);
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
+  const [savingAgentSettings, setSavingAgentSettings] = useState(false);
+  const [pricingPlans, setPricingPlans] = useState<PublicPricingPlan[]>([]);
+  const [savingPricingPlan, setSavingPricingPlan] = useState<string | null>(null);
+  const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
+  const [promoDraft, setPromoDraft] = useState(EMPTY_PROMO_CODE);
+  const [savingPromoCode, setSavingPromoCode] = useState(false);
 
   // Admin-specific states
   const [logs, setLogs] = useState<ChatLog[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [ingestionJobs, setIngestionJobs] = useState<IngestionJobRow[]>([]);
   const [evalRuns, setEvalRuns] = useState<EvaluationRun[]>([]);
   const [adminStats, setAdminStats] = useState<AdminStats>({ totalQueries: 0, avgResponseMs: 0, uniqueSourceFiles: 0 });
   const [totalChunks, setTotalChunks] = useState(0);
@@ -109,9 +252,16 @@ export default function SuperAdminPage() {
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
   const [expandedEval, setExpandedEval] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [updatingSource, setUpdatingSource] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sheetUrl, setSheetUrl] = useState("");
   const [evaluating, setEvaluating] = useState(false);
+  const [evaluationStartedAt, setEvaluationStartedAt] = useState<number | null>(null);
+  const [evaluationElapsedMs, setEvaluationElapsedMs] = useState(0);
+  const [evaluationEngine, setEvaluationEngine] = useState<EvaluationEngineSnapshot | null>(null);
+  const [resettingPasswordId, setResettingPasswordId] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [creditDrafts, setCreditDrafts] = useState<Record<string, { amount: string; reason: string }>>({});
 
   const showToast = (msg: string, type: "success" | "error") => {
     setToast({ msg, type });
@@ -121,13 +271,29 @@ export default function SuperAdminPage() {
   // Check auth and role
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/auth/me");
-      const data = await res.json();
-      if (!data.user || data.user.role !== "SUPER_ADMIN") {
-        router.push("/chat");
-        return;
+      try {
+        const res = await fetch("/api/auth/me");
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.error || "Unable to verify your session. Please refresh once.", "error");
+          return;
+        }
+        if (!data.user) {
+          router.replace("/login");
+          return;
+        }
+        if (data.user.role === "ADMIN") {
+          router.replace("/admin");
+          return;
+        }
+        if (data.user.role !== "SUPER_ADMIN") {
+          router.replace("/chat");
+          return;
+        }
+        setCurrentUser(data.user);
+      } catch {
+        showToast("Unable to verify your session. Please refresh once.", "error");
       }
-      setCurrentUser(data.user);
     })();
   }, [router]);
 
@@ -135,12 +301,6 @@ export default function SuperAdminPage() {
     const res = await fetch("/api/super-admin/users");
     const data = await res.json();
     if (res.ok) setUsers(data.users || []);
-  }, []);
-
-  const fetchQuotas = useCallback(async () => {
-    const res = await fetch("/api/super-admin/quotas");
-    const data = await res.json();
-    if (res.ok) setQuotas(data.quotas || []);
   }, []);
 
   const fetchStats = useCallback(async () => {
@@ -169,6 +329,7 @@ export default function SuperAdminPage() {
       if (res.ok) {
         setDocuments(data.documents || []);
         setTotalChunks(data.totalChunks || 0);
+        setIngestionJobs(data.jobs || []);
       }
     } catch (e) {
       console.error("Failed to fetch documents:", e);
@@ -181,29 +342,106 @@ export default function SuperAdminPage() {
       const data = await res.json();
       if (res.ok) {
         setEvalRuns(data.runs || []);
+        setEvaluationEngine(data.engine || null);
       }
     } catch (e) {
       console.error("Failed to fetch evaluations:", e);
     }
   }, []);
 
+  const fetchHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/super-admin/health");
+      if (res.ok) setHealthData(await res.json());
+    } catch (e) {
+      console.error("Failed to fetch health data:", e);
+    }
+  }, []);
+
+  const fetchAgentSettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/agent-settings");
+      const data = await res.json();
+      if (res.ok && data.settings) setAgentSettings(normalizeAgentSettings(data.settings));
+    } catch (e) {
+      console.error("Failed to fetch agent settings:", e);
+    }
+  }, []);
+
+  const fetchPricingPlans = useCallback(async () => {
+    try {
+      const res = await fetch("/api/super-admin/pricing");
+      const data = await res.json();
+      if (res.ok) setPricingPlans(data.plans || []);
+    } catch (e) {
+      console.error("Failed to fetch pricing plans:", e);
+    }
+  }, []);
+
+  const fetchPromoCodes = useCallback(async () => {
+    try {
+      const res = await fetch("/api/super-admin/promo-codes");
+      const data = await res.json();
+      if (res.ok) setPromoCodes(data.promoCodes || []);
+    } catch (e) {
+      console.error("Failed to fetch promo codes:", e);
+    }
+  }, []);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
-    if (activeTab === "overview" || activeTab === "users" || activeTab === "quotas") {
-      await Promise.all([fetchUsers(), fetchQuotas(), fetchStats()]);
+    if (activeTab === "overview" || activeTab === "users") {
+      await Promise.all([fetchUsers(), fetchStats(), fetchPricingPlans()]);
+    } else if (activeTab === "pricing") {
+      await Promise.all([fetchPricingPlans(), fetchPromoCodes()]);
+    } else if (activeTab === "agent") {
+      await fetchAgentSettings();
     } else if (activeTab === "documents") {
       await fetchDocuments();
     } else if (activeTab === "logs") {
       await fetchLogs();
     } else if (activeTab === "evaluations") {
       await fetchEvaluations();
+    } else if (activeTab === "health") {
+      await fetchHealth();
     }
     setLoading(false);
-  }, [activeTab, fetchUsers, fetchQuotas, fetchStats, fetchDocuments, fetchLogs, fetchEvaluations]);
+  }, [activeTab, fetchUsers, fetchStats, fetchPricingPlans, fetchPromoCodes, fetchAgentSettings, fetchDocuments, fetchLogs, fetchEvaluations, fetchHealth]);
 
   useEffect(() => {
-    if (currentUser) loadAll();
+    if (!currentUser) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void loadAll();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser, activeTab, loadAll]);
+
+  useEffect(() => {
+    if (!evaluating || !evaluationStartedAt) return;
+
+    const interval = setInterval(() => {
+      setEvaluationElapsedMs(Date.now() - evaluationStartedAt);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [evaluating, evaluationStartedAt]);
+
+  // Poll ingestion jobs if any are pending/processing
+  useEffect(() => {
+    const hasActiveJobs = ingestionJobs.some(
+      (job) => job.status === "PENDING" || job.status === "PROCESSING"
+    );
+    if (!hasActiveJobs) return;
+
+    const interval = setInterval(() => {
+      fetchDocuments();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [ingestionJobs, fetchDocuments]);
 
   // Update user role
   const handleRoleChange = async (userId: string, newRole: string) => {
@@ -217,8 +455,58 @@ export default function SuperAdminPage() {
       if (!res.ok) throw new Error(data.error);
       showToast(`Role updated to ${ROLE_LABELS[newRole]?.label || newRole}`, "success");
       await fetchUsers();
-    } catch (e: any) {
-      showToast(e.message, "error");
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Failed to update role", "error");
+    }
+  };
+
+  const handlePlanChange = async (userId: string, planSlug: string) => {
+    try {
+      const res = await fetch("/api/super-admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, planSlug }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      showToast("User plan updated", "success");
+      await fetchUsers();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Failed to update user plan", "error");
+    }
+  };
+
+  const handleCreditAdjustment = async (userId: string) => {
+    const draft = creditDrafts[userId] || { amount: "", reason: "" };
+    const amount = Number(draft.amount);
+    if (!Number.isInteger(amount) || amount === 0) {
+      showToast("Enter a non-zero whole-number credit adjustment", "error");
+      return;
+    }
+    if (draft.reason.trim().length < 3) {
+      showToast("Add a short reason for the credit change", "error");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/super-admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          creditAdjustment: {
+            amount,
+            reason: draft.reason.trim(),
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setCreditDrafts((current) => ({ ...current, [userId]: { amount: "", reason: "" } }));
+      showToast("Credits adjusted for this month", "success");
+      await fetchUsers();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Failed to adjust credits", "error");
     }
   };
 
@@ -234,8 +522,8 @@ export default function SuperAdminPage() {
       if (!res.ok) throw new Error(data.error);
       showToast(isActive ? "User deactivated" : "User activated", "success");
       await fetchUsers();
-    } catch (e: any) {
-      showToast(e.message, "error");
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Failed to update account status", "error");
     }
   };
 
@@ -251,87 +539,191 @@ export default function SuperAdminPage() {
       if (!res.ok) throw new Error("Failed to delete");
       showToast("User deleted", "success");
       await fetchUsers();
-    } catch (e: any) {
-      showToast(e.message, "error");
+    } catch (e: unknown) {
+      showToast(getErrorMessage(e, "Failed to delete user"), "error");
     }
   };
 
-  // Save quota
-  const handleSaveQuota = async (q: QuotaRow) => {
-    setSavingQuota(q.role);
+  // Update password
+  const handleUpdatePassword = async (userId: string) => {
+    if (!newPassword || newPassword.length < 12 || !/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^A-Za-z0-9]/.test(newPassword)) {
+      showToast("Use 12+ characters with uppercase, lowercase, a number, and a symbol", "error");
+      return;
+    }
     try {
-      const res = await fetch("/api/super-admin/quotas", {
-        method: "PUT",
+      const res = await fetch("/api/super-admin/users", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: q.role,
-          dailyQueryLimit: q.dailyQueryLimit,
-          monthlyQueryLimit: q.monthlyQueryLimit,
-          maxFileUploads: q.maxFileUploads,
-        }),
-      });
-      if (!res.ok) throw new Error("Failed to save");
-      showToast(`${ROLE_LABELS[q.role]?.label} quota updated`, "success");
-      await fetchQuotas();
-    } catch (e: any) {
-      showToast(e.message, "error");
-    } finally {
-      setSavingQuota(null);
-    }
-  };
-
-  // Update quota state locally
-  const updateQuota = (role: string, field: string, value: number) => {
-    setQuotas((prev) =>
-      prev.map((q) => (q.role === role ? { ...q, [field]: value } : q))
-    );
-  };
-
-  // File Upload Ingestion
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const res = await fetch("/api/ingest", {
-        method: "POST",
-        body: formData,
+        body: JSON.stringify({ userId, password: newPassword }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      showToast(`✅ "${file.name}" uploaded successfully!`, "success");
+      showToast("Password updated successfully", "success");
+      setResettingPasswordId(null);
+      setNewPassword("");
+    } catch (e: unknown) {
+      showToast(getErrorMessage(e, "Failed to update password"), "error");
+    }
+  };
+
+  const handleSaveAgentSettings = async () => {
+    setSavingAgentSettings(true);
+    try {
+      const res = await fetch("/api/agent-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(agentSettings),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save agent profile");
+      setAgentSettings(normalizeAgentSettings(data.settings));
+      showToast("Agent profile updated", "success");
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Failed to save agent profile", "error");
+    } finally {
+      setSavingAgentSettings(false);
+    }
+  };
+
+  const updateAgentSetting = <K extends keyof AgentSettings>(field: K, value: AgentSettings[K]) => {
+    setAgentSettings((current) => ({ ...current, [field]: value }));
+  };
+
+  const updatePricingPlan = (slug: string, updates: Partial<PublicPricingPlan>) => {
+    setPricingPlans((current) =>
+      current.map((plan) => plan.slug === slug ? { ...plan, ...updates } : plan)
+    );
+  };
+
+  const handleSavePricingPlan = async (plan: PublicPricingPlan) => {
+    setSavingPricingPlan(plan.slug);
+    try {
+      const closedKnowledgePlan = { ...plan, maxFileUploads: 0 };
+      const res = await fetch("/api/super-admin/pricing", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(closedKnowledgePlan),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save pricing plan");
+      updatePricingPlan(plan.slug, data.plan);
+      showToast(`${plan.name} pricing updated`, "success");
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Failed to save pricing plan", "error");
+    } finally {
+      setSavingPricingPlan(null);
+    }
+  };
+
+  const handleSavePromoCode = async () => {
+    const code = promoDraft.code.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{2,40}$/.test(code)) {
+      showToast("Use 2-40 letters, numbers, hyphens, or underscores for the promo code", "error");
+      return;
+    }
+    if (promoDraft.discountPercent < 1 || promoDraft.discountPercent > 100) {
+      showToast("Discount must be between 1% and 100%", "error");
+      return;
+    }
+
+    setSavingPromoCode(true);
+    try {
+      const res = await fetch("/api/super-admin/promo-codes", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...promoDraft,
+          code,
+          description: promoDraft.description.trim() || "Promotional discount",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save promo code");
+      setPromoDraft(EMPTY_PROMO_CODE);
+      showToast("Promo code saved", "success");
+      await fetchPromoCodes();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Failed to save promo code", "error");
+    } finally {
+      setSavingPromoCode(false);
+    }
+  };
+
+  const handleDeletePromoCode = async (id: string) => {
+    const res = await fetch("/api/super-admin/promo-codes", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      showToast("Promo code deleted", "success");
+      await fetchPromoCodes();
+    } else {
+      showToast("Failed to delete promo code", "error");
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    try {
+      const results = await Promise.allSettled(Array.from(files).map(async (file) => {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/ingest", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(`"${file.name}": ${data.error}`);
+        return data.message || `"${file.name}" queued.`;
+      }));
+
+      const failures = results.filter((result) => result.status === "rejected") as PromiseRejectedResult[];
+      if (failures.length > 0) {
+        showToast(`Failed to add some resources: ${failures.map((failure) => failure.reason.message).join(", ")}`, "error");
+      } else {
+        showToast(`Started indexing ${results.length} resource(s).`, "success");
+      }
       await fetchDocuments();
-    } catch (err: any) {
-      showToast(`Upload failed: ${err.message}`, "error");
+    } catch (err: unknown) {
+      showToast(`Knowledge add failed: ${getErrorMessage(err, "Unknown add error")}`, "error");
     } finally {
       setUploading(false);
       e.target.value = "";
     }
   };
 
-  // Google Sheets Ingestion
   const handleSheetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sheetUrl) return;
+    const urls = sheetUrl
+      .split(/[\n,]/)
+      .map((url) => url.trim())
+      .filter(Boolean);
+    if (urls.length === 0) return;
 
     setUploading(true);
     try {
-      const res = await fetch("/api/ingest/sheet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: sheetUrl }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      showToast(`✅ Google Sheet synced successfully!`, "success");
+      const results = await Promise.allSettled(urls.map(async (url) => {
+        const res = await fetch("/api/ingest/sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(`"${url}": ${data.error}`);
+        return data.message || `"${url}" queued.`;
+      }));
+
+      const failures = results.filter((result) => result.status === "rejected") as PromiseRejectedResult[];
+      if (failures.length > 0) {
+        showToast(`Failed to sync some resources: ${failures.map((failure) => failure.reason.message).join(", ")}`, "error");
+      } else {
+        showToast(`Started syncing ${results.length} source(s).`, "success");
+      }
       setSheetUrl("");
       await fetchDocuments();
-    } catch (err: any) {
-      showToast(`Sheet sync failed: ${err.message}`, "error");
+    } catch (err: unknown) {
+      showToast(`Sheet sync failed: ${getErrorMessage(err, "Unknown sync error")}`, "error");
     } finally {
       setUploading(false);
     }
@@ -342,37 +734,60 @@ export default function SuperAdminPage() {
     if (!confirm("Start advanced synthetic Ragas-style evaluation benchmark? This runs multiple Llama-3.3 checking iterations and takes ~30-45 seconds.")) return;
     
     setEvaluating(true);
+    setEvaluationStartedAt(Date.now());
+    setEvaluationElapsedMs(0);
     try {
       const res = await fetch("/api/admin/evaluate", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (data.engine) setEvaluationEngine(data.engine);
       showToast("✅ Benchmark evaluation run complete!", "success");
       await fetchEvaluations();
-    } catch (e: any) {
-      showToast(`Evaluation run failed: ${e.message}`, "error");
+    } catch (e: unknown) {
+      showToast(`Evaluation run failed: ${getErrorMessage(e, "Unknown evaluation error")}`, "error");
     } finally {
       setEvaluating(false);
+      setEvaluationStartedAt(null);
     }
   };
 
   const handleDeleteDocument = async (doc: Document) => {
-    if (!confirm(`Delete "${doc.name}"? This will remove ${doc.chunkCount} chunks from ChromaDB. This action cannot be undone.`)) return;
+    if (!confirm(`Delete "${doc.name}"? This will remove ${doc.chunkCount} chunks from the active knowledge base. This action cannot be undone.`)) return;
 
     setDeleting(doc.name);
     try {
       const res = await fetch("/api/admin/documents", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: doc.ids }),
+        body: JSON.stringify({ name: doc.name, ids: doc.ids }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       showToast(`Deleted "${doc.name}" (${doc.chunkCount} chunks)`, "success");
       await fetchDocuments();
-    } catch (e: any) {
-      showToast(`Failed to delete: ${e.message}`, "error");
+    } catch (e: unknown) {
+      showToast(`Failed to delete: ${getErrorMessage(e, "Unknown delete error")}`, "error");
     } finally {
       setDeleting(null);
+    }
+  };
+
+  const handleToggleDocumentActive = async (doc: Document) => {
+    setUpdatingSource(doc.name);
+    try {
+      const res = await fetch("/api/admin/documents", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: doc.name, isActive: !doc.isActive }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      showToast(`${doc.name} ${doc.isActive ? "deactivated" : "activated"}`, "success");
+      await fetchDocuments();
+    } catch (e: unknown) {
+      showToast(`Failed to update source: ${getErrorMessage(e, "Unknown update error")}`, "error");
+    } finally {
+      setUpdatingSource(null);
     }
   };
 
@@ -385,14 +800,14 @@ export default function SuperAdminPage() {
         setAdminStats({ totalQueries: 0, avgResponseMs: 0, uniqueSourceFiles: 0 });
         showToast("Chat logs cleared", "success");
       }
-    } catch (e: any) {
+    } catch {
       showToast("Failed to clear logs", "error");
     }
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push("/login");
+    await fetch("/api/auth/login", { method: "DELETE" });
+    router.replace("/login");
     router.refresh();
   };
 
@@ -410,6 +825,9 @@ export default function SuperAdminPage() {
       day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
   };
+  const activeDocuments = documents.filter((doc) => doc.isActive);
+  const inactiveDocuments = documents.filter((doc) => !doc.isActive);
+  const activeChunks = activeDocuments.reduce((sum, doc) => sum + doc.chunkCount, 0);
 
   if (!currentUser) {
     return (
@@ -420,7 +838,31 @@ export default function SuperAdminPage() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: "#060606", color: "#F5F0E8" }}>
+    <DashboardShell
+      role="Super Admin"
+      eyebrow="Platform Command"
+      title="Super Admin Console"
+      description="Operate the platform, govern access, shape plans, and monitor the assistant from one workspace."
+      email={currentUser.email}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      onRefresh={loadAll}
+      refreshing={loading}
+      onLogout={handleLogout}
+      accent="gold"
+      enableThemeToggle
+      navItems={[
+        { id: "overview", label: "Overview", description: "Platform pulse", icon: <BarChart3 size={15} /> },
+        { id: "analytics", label: "Analytics", description: "Search and engagement trends", icon: <Gauge size={15} /> },
+        { id: "users", label: "Users & Roles", description: "Access and plan assignment", icon: <Users size={15} />, count: users.length },
+        { id: "pricing", label: "Plans & Payments", description: "Limits, pricing, promo codes", icon: <CreditCard size={15} /> },
+        { id: "agent", label: "Agent Profile", description: "Identity and chat copy", icon: <Settings size={15} /> },
+        { id: "documents", label: "Knowledge Base", description: "Curated source controls", icon: <Database size={15} />, count: documents.length },
+        { id: "logs", label: "Query Logs", description: "Assistant activity", icon: <MessageSquare size={15} />, count: logs.length },
+        { id: "evaluations", label: "Ragas Evaluations", description: "Quality benchmarks", icon: <Sparkles size={15} />, count: evalRuns.length },
+        { id: "health", label: "Maintenance & Health", description: "Services and queue health", icon: <Activity size={15} /> },
+      ]}
+    >
       {/* Toast */}
       <AnimatePresence>
         {toast && (
@@ -442,62 +884,7 @@ export default function SuperAdminPage() {
         )}
       </AnimatePresence>
 
-      {/* Header */}
-      <header className="sticky top-0 z-40" style={{ background: "rgba(6,6,6,0.85)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(201,168,76,0.08)" }}>
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href="/chat" className="flex items-center gap-2 text-[12px] transition-colors" style={{ color: "var(--text-tertiary)" }}>
-              <ArrowLeft size={14} /> Back
-            </Link>
-            <div className="w-px h-5" style={{ background: "rgba(201,168,76,0.15)" }} />
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 flex items-center justify-center" style={{ background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 2 }}>
-                <Crown size={16} style={{ color: "#f59e0b" }} />
-              </div>
-              <div>
-                <h1 className="text-[16px] font-bold" style={{ color: "var(--text-primary)" }}>Super Admin Console</h1>
-                <p className="text-[10px] tracking-[0.15em] uppercase" style={{ color: "var(--gold-dim)" }}>SYSTEM · INGESTION · USERS · QUOTAS</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button onClick={loadAll} disabled={loading} className="p-2 transition-colors" style={{ color: "var(--text-tertiary)" }}>
-              <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-            </button>
-            <button onClick={handleLogout} className="flex items-center gap-2 px-4 py-2 text-[11px] font-semibold tracking-[0.06em] transition-all" style={{ border: "1px solid rgba(239,68,68,0.2)", color: "#f87171", borderRadius: 2 }}>
-              <LogOut size={14} /> Logout
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        {/* Tab navigation */}
-        <div className="flex flex-wrap gap-1.5 p-1.5" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(201,168,76,0.06)", borderRadius: 2, width: "fit-content" }}>
-          {([
-            { id: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
-            { id: "users", label: "Users & Roles", icon: <Users size={14} /> },
-            { id: "quotas", label: "Query Quotas", icon: <Gauge size={14} /> },
-            { id: "documents", label: "Dataset & Ingestion", icon: <Database size={14} /> },
-            { id: "logs", label: "Query Logs", icon: <MessageSquare size={14} /> },
-            { id: "evaluations", label: "Ragas Evaluations", icon: <Sparkles size={14} /> },
-          ] as const).map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className="flex items-center gap-2 px-5 py-2.5 text-[12px] font-medium transition-all"
-              style={{
-                color: activeTab === tab.id ? "var(--gold-primary)" : "var(--text-tertiary)",
-                background: activeTab === tab.id ? "rgba(201,168,76,0.06)" : "transparent",
-                border: activeTab === tab.id ? "1px solid rgba(201,168,76,0.15)" : "1px solid transparent",
-                borderRadius: 2,
-              }}
-            >
-              {tab.icon} {tab.label}
-            </button>
-          ))}
-        </div>
+        {activeTab === "analytics" && <AnalyticsDashboard />}
 
         {/* ── TAB: Overview ───────────────────────────── */}
         {activeTab === "overview" && stats && (
@@ -511,9 +898,9 @@ export default function SuperAdminPage() {
                 { label: "Total Queries", value: stats.totalQueries, icon: <Activity size={18} /> },
                 { label: "Today's Queries", value: stats.todayQueries, icon: <Gauge size={18} /> },
               ].map((s) => (
-                <div key={s.label} className="p-5 transition-all duration-200" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(201,168,76,0.06)", borderRadius: 2 }}
-                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "rgba(201,168,76,0.2)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(201,168,76,0.06)")}>
+                <div key={s.label} className="p-5 transition-all duration-200" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--border-active)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--dashboard-border)")}>
                   <div className="flex items-center gap-2 mb-3" style={{ color: "var(--gold-dim)" }}>
                     {s.icon}
                     <span className="text-[10px] font-semibold tracking-[0.12em] uppercase">{s.label}</span>
@@ -523,8 +910,43 @@ export default function SuperAdminPage() {
               ))}
             </div>
 
+            {stats.revenue && (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+                {[
+                  { label: "Paid Revenue", value: formatMinor(stats.revenue.paidAmountMinor, "INR") },
+                  { label: "Pending Revenue", value: formatMinor(stats.revenue.pendingAmountMinor, "INR") },
+                  { label: "AI Cost", value: formatMinor(Math.round(stats.revenue.estimatedAiCostMinor), "INR") },
+                  { label: "Gross Profit", value: formatMinor(Math.round(stats.revenue.estimatedGrossProfitMinor), "INR") },
+                ].map((metric) => (
+                  <div key={metric.label} className="p-5" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>{metric.label}</p>
+                    <p className="mt-2 text-[24px] font-black" style={{ color: "var(--gold-primary)" }}>{metric.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {stats.revenue?.byPlan?.length ? (
+              <div className="p-6" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                <h3 className="text-[11px] font-semibold tracking-[0.15em] uppercase mb-4" style={{ color: "var(--text-tertiary)" }}>Plan Profitability</h3>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {stats.revenue.byPlan.map((plan) => (
+                    <div key={plan.planSlug} className="border p-4" style={{ borderColor: "var(--border-subtle)", borderRadius: 8 }}>
+                      <p className="text-[12px] font-bold" style={{ color: "var(--text-primary)" }}>{plan.planSlug}</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+                        <span>Revenue <strong style={{ color: "var(--gold-primary)" }}>{formatMinor(plan.paidAmountMinor, "INR")}</strong></span>
+                        <span>AI cost <strong style={{ color: "var(--text-primary)" }}>{formatMinor(Math.round(plan.estimatedAiCostMinor), "INR")}</strong></span>
+                        <span>Profit <strong style={{ color: "var(--gold-primary)" }}>{formatMinor(Math.round(plan.estimatedGrossProfitMinor), "INR")}</strong></span>
+                        <span>Answers <strong style={{ color: "var(--text-primary)" }}>{plan.answers}</strong></span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {/* Role distribution */}
-            <div className="p-6" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(201,168,76,0.06)", borderRadius: 2 }}>
+            <div className="p-6" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
               <h3 className="text-[11px] font-semibold tracking-[0.15em] uppercase mb-4" style={{ color: "var(--text-tertiary)" }}>Role Distribution</h3>
               <div className="flex gap-6">
                 {stats.roleDistribution.map((r) => {
@@ -564,13 +986,13 @@ export default function SuperAdminPage() {
                       key={u.id}
                       className="p-5 transition-all duration-200"
                       style={{
-                        background: "rgba(255,255,255,0.02)",
-                        border: `1px solid ${isSelf ? "rgba(245,158,11,0.2)" : "rgba(201,168,76,0.06)"}`,
-                        borderRadius: 2,
+                        background: "var(--dashboard-card)",
+                        border: `1px solid ${isSelf ? "var(--border-active)" : "var(--dashboard-border)"}`,
+                        borderRadius: 12,
                         opacity: u.isActive ? 1 : 0.5,
                       }}
                     >
-                      <div className="flex items-start justify-between gap-6">
+                      <div className="flex flex-col items-start justify-between gap-4 xl:flex-row xl:gap-6">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-1">
                             <span className="text-[14px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>
@@ -587,16 +1009,52 @@ export default function SuperAdminPage() {
                             )}
                           </div>
                           <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>{u.email}</p>
-                          <div className="flex gap-6 mt-3">
+                          <div className="flex flex-wrap gap-x-6 gap-y-2 mt-3">
+                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Plan: <strong style={{ color: "var(--gold-primary)" }}>{pricingPlans.find((plan) => plan.slug === u.planSlug)?.name || u.planSlug}</strong></span>
                             <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Today: <strong style={{ color: "var(--gold-primary)" }}>{u.todayQueries}</strong></span>
                             <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Monthly: <strong style={{ color: "var(--gold-primary)" }}>{u.monthlyQueries}</strong></span>
+                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Credits left: <strong style={{ color: "var(--gold-primary)" }}>{u.credits?.monthlyRemaining ?? "—"}</strong></span>
+                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Manual adj: <strong style={{ color: "var(--text-primary)" }}>{u.credits?.monthlyAdjustment ?? 0}</strong></span>
                             <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Total: <strong style={{ color: "var(--text-primary)" }}>{u.totalQueries}</strong></span>
                           </div>
                         </div>
 
                         {/* Actions */}
                         {!isSelf && (
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <select
+                              value={u.planSlug}
+                              onChange={(e) => handlePlanChange(u.id, e.target.value)}
+                              className="text-[11px] font-medium px-3 py-2 outline-none cursor-pointer"
+                              style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+                            >
+                              {pricingPlans.map((plan) => <option key={plan.slug} value={plan.slug}>{plan.name}</option>)}
+                            </select>
+
+                            <input
+                              type="number"
+                              placeholder="+/- credits"
+                              value={creditDrafts[u.id]?.amount || ""}
+                              onChange={(e) => setCreditDrafts((current) => ({ ...current, [u.id]: { amount: e.target.value, reason: current[u.id]?.reason || "" } }))}
+                              className="w-24 px-2 py-2 text-[11px] outline-none"
+                              style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+                            />
+                            <input
+                              type="text"
+                              placeholder="Reason"
+                              value={creditDrafts[u.id]?.reason || ""}
+                              onChange={(e) => setCreditDrafts((current) => ({ ...current, [u.id]: { amount: current[u.id]?.amount || "", reason: e.target.value } }))}
+                              className="w-32 px-2 py-2 text-[11px] outline-none"
+                              style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+                            />
+                            <button
+                              onClick={() => handleCreditAdjustment(u.id)}
+                              className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.08em]"
+                              style={{ color: "var(--gold-primary)", border: "1px solid rgba(201,168,76,0.28)", borderRadius: 2 }}
+                            >
+                              Adjust
+                            </button>
+
                             {/* Role selector */}
                             <select
                               value={u.role}
@@ -623,6 +1081,35 @@ export default function SuperAdminPage() {
                               {u.isActive ? <UserCheck size={14} /> : <UserX size={14} />}
                             </button>
 
+                            {/* Password Reset */}
+                            {resettingPasswordId === u.id ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  placeholder="New pwd..."
+                                  value={newPassword}
+                                  onChange={(e) => setNewPassword(e.target.value)}
+                                  className="text-[11px] px-2 py-1 outline-none w-24 h-8"
+                                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+                                />
+                                <button onClick={() => handleUpdatePassword(u.id)} className="w-8 h-8 flex items-center justify-center transition-colors" style={{ color: "#22c55e", border: "1px solid rgba(34,197,94,0.2)", borderRadius: 2 }}>
+                                  <CheckCircle2 size={14} />
+                                </button>
+                                <button onClick={() => { setResettingPasswordId(null); setNewPassword(""); }} className="w-8 h-8 flex items-center justify-center transition-colors" style={{ color: "#f87171", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 2 }}>
+                                  <UserX size={14} />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setResettingPasswordId(u.id)}
+                                className="p-2 transition-colors"
+                                title="Reset Password"
+                                style={{ color: "var(--gold-primary)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: 2 }}
+                              >
+                                <Settings size={14} />
+                              </button>
+                            )}
+
                             {/* Delete */}
                             <button
                               onClick={() => handleDeleteUser(u.id, u.email)}
@@ -642,94 +1129,173 @@ export default function SuperAdminPage() {
           </motion.div>
         )}
 
-        {/* ── TAB: Quotas ─────────────────────────────── */}
-        {activeTab === "quotas" && (
+        {/* ── TAB: Pricing & Payments ─────────────────── */}
+        {activeTab === "pricing" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
             <div>
-              <h2 className="text-[14px] font-bold" style={{ color: "var(--text-primary)" }}>Query Quota Configuration</h2>
-              <p className="text-[12px] mt-1" style={{ color: "var(--text-tertiary)" }}>Set daily and monthly query limits per role. Users exceeding their quota will be blocked until the next period.</p>
+              <h2 className="text-[14px] font-bold" style={{ color: "var(--text-primary)" }}>Plans, Limits & Payment Configuration</h2>
+              <p className="text-[12px] mt-1" style={{ color: "var(--text-tertiary)" }}>Closed-knowledge subscription plans for the existing Siddha resource base. Each plan controls public pricing, enforced credit balances, features, and secure provider handoff URL.</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {quotas.map((q) => {
-                const info = ROLE_LABELS[q.role] || { label: q.role, color: "#888", bg: "rgba(136,136,136,0.1)" };
-                return (
-                  <div key={q.role} className="p-6 space-y-5 transition-all duration-200" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(201,168,76,0.06)", borderRadius: 2 }}
-                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = "rgba(201,168,76,0.2)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(201,168,76,0.06)")}>
-                    {/* Role badge */}
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-3 h-3" style={{ background: info.color, borderRadius: 1 }} />
-                      <span className="text-[12px] font-bold tracking-[0.08em] uppercase" style={{ color: info.color }}>
-                        {info.label}
-                      </span>
-                    </div>
-
-                    {/* Daily limit */}
+            <div className="space-y-5">
+              {pricingPlans.map((plan) => (
+                <div key={plan.slug} className="p-6 space-y-5" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                  <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
-                      <label className="block text-[10px] font-semibold tracking-[0.12em] uppercase mb-2" style={{ color: "var(--text-tertiary)" }}>
-                        Daily Query Limit
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={q.dailyQueryLimit}
-                        onChange={(e) => updateQuota(q.role, "dailyQueryLimit", parseInt(e.target.value) || 0)}
-                        className="w-full px-3 py-2.5 text-[14px] font-mono outline-none transition-all"
-                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
-                        onFocus={(e) => (e.target.style.borderColor = "var(--gold-primary)")}
-                        onBlur={(e) => (e.target.style.borderColor = "var(--border-subtle)")}
-                      />
+                      <h3 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>{plan.name}</h3>
+                      <p className="mt-1 text-[11px] font-mono" style={{ color: "var(--gold-dim)" }}>/{plan.slug}</p>
                     </div>
-
-                    {/* Monthly limit */}
-                    <div>
-                      <label className="block text-[10px] font-semibold tracking-[0.12em] uppercase mb-2" style={{ color: "var(--text-tertiary)" }}>
-                        Monthly Query Limit
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={q.monthlyQueryLimit}
-                        onChange={(e) => updateQuota(q.role, "monthlyQueryLimit", parseInt(e.target.value) || 0)}
-                        className="w-full px-3 py-2.5 text-[14px] font-mono outline-none transition-all"
-                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
-                        onFocus={(e) => (e.target.style.borderColor = "var(--gold-primary)")}
-                        onBlur={(e) => (e.target.style.borderColor = "var(--border-subtle)")}
-                      />
+                    <div className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-4" style={{ color: "var(--text-secondary)" }}>
+                      <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{formatMinor(plan.monthlyPriceMinor, plan.currency)} / month</span>
+                      <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{formatMinor(plan.yearlyPriceMinor, plan.currency)} / year</span>
+                      <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{plan.monthlyQueryLimit.toLocaleString("en-IN")} monthly credits</span>
+                      <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{plan.dailyQueryLimit.toLocaleString("en-IN")} daily credit fair use</span>
                     </div>
-
-                    {/* File uploads */}
-                    <div>
-                      <label className="block text-[10px] font-semibold tracking-[0.12em] uppercase mb-2" style={{ color: "var(--text-tertiary)" }}>
-                        Max File Uploads
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={q.maxFileUploads}
-                        onChange={(e) => updateQuota(q.role, "maxFileUploads", parseInt(e.target.value) || 0)}
-                        className="w-full px-3 py-2.5 text-[14px] font-mono outline-none transition-all"
-                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
-                        onFocus={(e) => (e.target.style.borderColor = "var(--gold-primary)")}
-                        onBlur={(e) => (e.target.style.borderColor = "var(--border-subtle)")}
-                      />
+                    <div className="flex flex-wrap gap-4 text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                      <PricingCheckbox label="Published" checked={plan.isPublished} onChange={(checked) => updatePricingPlan(plan.slug, { isPublished: checked })} />
+                      <PricingCheckbox label="Popular" checked={plan.isPopular} onChange={(checked) => updatePricingPlan(plan.slug, { isPopular: checked })} />
+                      <PricingCheckbox label="Free plan" checked={plan.isFree} onChange={(checked) => updatePricingPlan(plan.slug, { isFree: checked })} />
                     </div>
-
-                    {/* Save */}
-                    <button
-                      onClick={() => handleSaveQuota(q)}
-                      disabled={savingQuota === q.role}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 text-[11px] font-bold tracking-[0.08em] uppercase transition-all disabled:opacity-60"
-                      style={{ background: "var(--gold-primary)", color: "#020202", borderRadius: 0 }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--gold-bright)")}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = "var(--gold-primary)")}
-                    >
-                      {savingQuota === q.role ? <Loader2 size={14} className="animate-spin" /> : <><Save size={14} /> Save Changes</>}
-                    </button>
                   </div>
-                );
-              })}
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <PricingField label="Plan Name" value={plan.name} onChange={(value) => updatePricingPlan(plan.slug, { name: value })} />
+                    <PricingField label="Currency" value={plan.currency} onChange={(value) => updatePricingPlan(plan.slug, { currency: value })} />
+                    <PricingField label="Monthly Price (minor unit)" type="number" value={plan.monthlyPriceMinor} onChange={(value) => updatePricingPlan(plan.slug, { monthlyPriceMinor: Number(value) || 0 })} />
+                    <PricingField label="Yearly Price (minor unit)" type="number" value={plan.yearlyPriceMinor} onChange={(value) => updatePricingPlan(plan.slug, { yearlyPriceMinor: Number(value) || 0 })} />
+                    <PricingField label="Daily Credits" type="number" value={plan.dailyQueryLimit} onChange={(value) => updatePricingPlan(plan.slug, { dailyQueryLimit: Number(value) || 0 })} />
+                    <PricingField label="Monthly Credits" type="number" value={plan.monthlyQueryLimit} onChange={(value) => updatePricingPlan(plan.slug, { monthlyQueryLimit: Number(value) || 0 })} />
+                    <PricingField label="Display Order" type="number" value={plan.displayOrder} onChange={(value) => updatePricingPlan(plan.slug, { displayOrder: Number(value) || 0 })} />
+                  </div>
+
+                  <PricingField label="Description" value={plan.description} onChange={(value) => updatePricingPlan(plan.slug, { description: value })} />
+                  <PricingField label="HTTPS Payment Provider URL" value={plan.checkoutUrl || ""} placeholder="https://provider.example/checkout/..." onChange={(value) => updatePricingPlan(plan.slug, { checkoutUrl: value || null })} />
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>Features (one per line)</span>
+                    <textarea
+                      rows={4}
+                      value={plan.features.join("\n")}
+                      onChange={(event) => updatePricingPlan(plan.slug, { features: event.target.value.split("\n").filter(Boolean) })}
+                      className="w-full resize-y px-3 py-2.5 text-[12px] leading-relaxed outline-none"
+                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+                    />
+                  </label>
+                  <button
+                    onClick={() => handleSavePricingPlan(plan)}
+                    disabled={savingPricingPlan === plan.slug}
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] disabled:opacity-60"
+                    style={{ background: "var(--gold-primary)", color: "#020202" }}
+                  >
+                    {savingPricingPlan === plan.slug ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save {plan.name}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-6 space-y-5" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+              <div>
+                <h3 className="text-[14px] font-bold" style={{ color: "var(--text-primary)" }}>Promo Codes</h3>
+                <p className="mt-1 text-[12px]" style={{ color: "var(--text-tertiary)" }}>Create purchase-time discounts. An empty applicable-plan list means the code works with every paid plan.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <PricingField label="Code" value={promoDraft.code} onChange={(value) => setPromoDraft((current) => ({ ...current, code: value.toUpperCase() }))} />
+                <PricingField label="Description (optional)" value={promoDraft.description} placeholder="Promotional discount" onChange={(value) => setPromoDraft((current) => ({ ...current, description: value }))} />
+                <PricingField label="Discount %" type="number" value={promoDraft.discountPercent} onChange={(value) => setPromoDraft((current) => ({ ...current, discountPercent: Number(value) || 0 }))} />
+                <PricingField label="Max Uses (blank = unlimited)" type="number" value={promoDraft.maxUses ?? ""} onChange={(value) => setPromoDraft((current) => ({ ...current, maxUses: value ? Number(value) : null }))} />
+              </div>
+              <div className="flex flex-wrap gap-4 text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                {pricingPlans.map((plan) => (
+                  <PricingCheckbox
+                    key={plan.slug}
+                    label={plan.name}
+                    checked={promoDraft.applicablePlanSlugs.includes(plan.slug)}
+                    onChange={(checked) => setPromoDraft((current) => ({
+                      ...current,
+                      applicablePlanSlugs: checked
+                        ? [...current.applicablePlanSlugs, plan.slug]
+                        : current.applicablePlanSlugs.filter((slug) => slug !== plan.slug),
+                    }))}
+                  />
+                ))}
+                <PricingCheckbox label="Active" checked={promoDraft.isActive} onChange={(checked) => setPromoDraft((current) => ({ ...current, isActive: checked }))} />
+              </div>
+              <p className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Only the code and discount are required. Leave plans unchecked to apply the promo to every paid plan.</p>
+              <button onClick={handleSavePromoCode} disabled={savingPromoCode || promoDraft.code.trim().length < 2} className="flex items-center gap-2 px-5 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] disabled:opacity-60" style={{ background: "var(--gold-primary)", color: "#020202" }}>
+                {savingPromoCode ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save Promo Code
+              </button>
+              <div className="space-y-2">
+                {promoCodes.map((promo) => (
+                  <div key={promo.id} className="flex flex-wrap items-center justify-between gap-3 border p-3 text-[12px]" style={{ borderColor: "var(--border-subtle)" }}>
+                    <span style={{ color: "var(--text-primary)" }}><strong>{promo.code}</strong> · {promo.discountPercent}% off · {promo.description}</span>
+                    <button onClick={() => handleDeletePromoCode(promo.id)} className="text-red-400"><Trash2 size={14} /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── TAB: Agent Profile ───────────────────────── */}
+        {activeTab === "agent" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+            <div>
+              <h2 className="text-[14px] font-bold" style={{ color: "var(--text-primary)" }}>Agent Profile Customization</h2>
+              <p className="text-[12px] mt-1" style={{ color: "var(--text-tertiary)" }}>Control the bot identity shown to users. Clinical safety instructions remain protected in code.</p>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
+              <div className="p-6 space-y-4" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                <p className="text-[10px] font-semibold tracking-[0.12em] uppercase" style={{ color: "var(--text-tertiary)" }}>Live Preview</p>
+                <div className="relative mx-auto h-32 w-32 overflow-hidden rounded-full" style={{ border: "1px solid rgba(201,168,76,0.24)" }}>
+                  <Image src={agentSettings.profileImageUrl} alt={`${agentSettings.agentName} profile`} fill sizes="128px" className="object-cover" />
+                </div>
+                <div className="text-center">
+                  <p className="text-[16px] font-bold" style={{ color: "var(--text-primary)" }}>{agentSettings.agentName}</p>
+                  <p className="mt-1 text-[11px]" style={{ color: "var(--text-tertiary)" }}>{agentSettings.agentSubtitle}</p>
+                </div>
+                <p className="text-center text-[10px]" style={{ color: "var(--gold-dim)" }}>Profile image: /bot-profile.png</p>
+              </div>
+
+              <div className="p-6 space-y-5" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <AgentTextField label="Agent Name" value={agentSettings.agentName} maxLength={80} onChange={(value) => updateAgentSetting("agentName", value)} />
+                  <AgentTextField label="Subtitle" value={agentSettings.agentSubtitle} maxLength={120} onChange={(value) => updateAgentSetting("agentSubtitle", value)} />
+                </div>
+                <AgentTextField label="Composer Placeholder" value={agentSettings.inputPlaceholder} maxLength={160} onChange={(value) => updateAgentSetting("inputPlaceholder", value)} />
+                <div className="flex items-center justify-between gap-4 p-4" style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: 10 }}>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--text-primary)" }}>Follow-up Questions</p>
+                    <p className="mt-1 text-[11px] leading-5" style={{ color: "var(--text-tertiary)" }}>
+                      When enabled, the bot asks 2-4 clarifying symptom questions before final answers. Turn off to answer directly.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={agentSettings.followUpQuestionsEnabled}
+                    onClick={() => updateAgentSetting("followUpQuestionsEnabled", !agentSettings.followUpQuestionsEnabled)}
+                    className="relative h-7 w-12 shrink-0 rounded-full transition-colors"
+                    style={{ background: agentSettings.followUpQuestionsEnabled ? "var(--gold-primary)" : "rgba(148,163,184,0.28)" }}
+                  >
+                    <span
+                      className="absolute top-1 h-5 w-5 rounded-full bg-black transition-transform"
+                      style={{ transform: agentSettings.followUpQuestionsEnabled ? "translateX(22px)" : "translateX(4px)" }}
+                    />
+                  </button>
+                </div>
+                <AgentTextarea label="Welcome Message" value={agentSettings.welcomeMessage} maxLength={2000} rows={7} onChange={(value) => updateAgentSetting("welcomeMessage", value)} />
+                <AgentTextarea label="Medical Disclaimer" value={agentSettings.disclaimer} maxLength={500} rows={3} onChange={(value) => updateAgentSetting("disclaimer", value)} />
+                <button
+                  onClick={handleSaveAgentSettings}
+                  disabled={savingAgentSettings}
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 text-[11px] font-bold tracking-[0.08em] uppercase transition-all disabled:opacity-60"
+                  style={{ background: "var(--gold-primary)", color: "#020202" }}
+                >
+                  {savingAgentSettings ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  Save Agent Profile
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -753,82 +1319,87 @@ export default function SuperAdminPage() {
               />
               <StatCard
                 icon={<HardDrive className="w-5 h-5" />}
-                label="Total Chunks"
-                value={totalChunks.toString()}
+                label="Active Chunks"
+                value={activeChunks.toString()}
                 color="from-teal-500 to-emerald-600"
               />
               <StatCard
                 icon={<FileText className="w-5 h-5" />}
-                label="Documents"
-                value={documents.length.toString()}
+                label="Inactive Sources"
+                value={inactiveDocuments.length.toString()}
                 color="from-purple-500 to-pink-600"
               />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Document Ingest Panel */}
-              <div className="lg:col-span-1 bg-white/[0.02] border border-white/5 rounded-2xl p-6 space-y-6" style={{ background: "rgba(255,255,255,0.01)", border: "1px solid rgba(201,168,76,0.06)" }}>
+              <div className="lg:col-span-1 bg-white/[0.02] border border-white/5 rounded-2xl p-6 space-y-6" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)" }}>
                 <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Document Ingestion</h3>
-                  <p className="text-xs text-neutral-500 mt-1 leading-normal">Add PDFs or Google Sheets to enrich the Siddha Knowledge base.</p>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Knowledge Base Policy</h3>
+                  <p className="text-xs text-neutral-500 mt-1 leading-normal">Users can ask only from curated resources already indexed in this project. Deactivated sources are hidden from retrieval without deleting their chunks.</p>
                 </div>
-
-                {/* Upload File */}
-                <div className="space-y-3">
-                  <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Upload Local PDF / CSV</h4>
-                  <label className="flex flex-col items-center justify-center w-full h-36 border border-dashed border-white/10 rounded-xl cursor-pointer bg-white/5 hover:bg-white/10 hover:border-teal-500/30 transition-all group relative">
-                    <div className="flex flex-col items-center justify-center p-4 text-center">
-                      {uploading ? (
-                        <Loader2 className="w-7 h-7 text-teal-400 animate-spin mb-2" />
-                      ) : (
-                        <UploadCloud className="w-7 h-7 text-neutral-400 group-hover:text-teal-400 transition-colors mb-2" />
-                      )}
-                      <p className="text-xs text-neutral-400 group-hover:text-neutral-300 font-medium">
-                        <span className="font-semibold text-teal-400">Click to upload</span> or drag files
-                      </p>
-                      <p className="text-[10px] text-neutral-600 mt-1">PDF, CSV up to 15MB</p>
-                    </div>
-                    <input type="file" className="hidden" accept=".pdf,.csv" onChange={handleFileUpload} disabled={uploading} />
+                <div className="space-y-3 text-xs text-neutral-400">
+                  <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Source-grounded answers only</p>
+                  <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Activation controls retrieval visibility</p>
+                  <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Admins can add, deactivate, or delete platform knowledge</p>
+                </div>
+                <div className="space-y-3 rounded-xl border border-white/5 bg-black/20 p-3">
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-neutral-300">Add Internal Resource</h4>
+                  <label className="flex h-28 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 text-center transition hover:border-teal-500/30 hover:bg-white/10">
+                    {uploading ? <Loader2 className="mb-2 h-6 w-6 animate-spin text-teal-400" /> : <UploadCloud className="mb-2 h-6 w-6 text-teal-400" />}
+                    <span className="text-xs font-bold text-neutral-300">Add PDF, CSV, or XLSX</span>
+                    <span className="mt-1 text-[10px] text-neutral-600">Admin-only corpus indexing</span>
+                    <input type="file" className="hidden" accept=".pdf,.csv,.xlsx" onChange={handleFileUpload} disabled={uploading} multiple />
                   </label>
                 </div>
-
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="absolute inset-0 flex items-center"><span className="w-full border-t border-white/5"></span></span>
-                  <span className="relative bg-[#060606] px-2 text-neutral-600 font-bold">Or</span>
-                </div>
-
-                {/* Google Sheet Sync */}
-                <form onSubmit={handleSheetSubmit} className="space-y-3">
-                  <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Sync Google Sheet dataset</h4>
-                  <div className="relative">
-                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-                    <input
-                      type="url"
-                      placeholder="Paste Google Sheets link..."
-                      value={sheetUrl}
-                      onChange={(e) => setSheetUrl(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-xs text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-teal-500/40 transition-all font-mono"
-                      disabled={uploading}
-                    />
-                  </div>
+                <form onSubmit={handleSheetSubmit} className="space-y-3 rounded-xl border border-white/5 bg-black/20 p-3">
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-neutral-300">Sync Sheet Resource</h4>
+                  <textarea
+                    placeholder="Paste Google Sheets links, one per line"
+                    value={sheetUrl}
+                    onChange={(event) => setSheetUrl(event.target.value)}
+                    rows={3}
+                    disabled={uploading}
+                    className="w-full resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white outline-none placeholder:text-neutral-600 focus:border-teal-500/40"
+                  />
                   <button
                     type="submit"
-                    disabled={!sheetUrl || uploading}
-                    className="w-full bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/20 py-2 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                    disabled={!sheetUrl.trim() || uploading}
+                    className="w-full rounded-lg border border-teal-500/20 bg-teal-500/10 py-2 text-xs font-bold text-teal-400 transition hover:bg-teal-500/20 disabled:opacity-50"
                   >
-                    {uploading ? "Syncing..." : "Sync Google Sheet"}
+                    {uploading ? "Indexing..." : "Sync Sheet Into Knowledge Base"}
                   </button>
                 </form>
+                <button
+                  type="button"
+                  onClick={fetchDocuments}
+                  className="w-full bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/20 py-2 rounded-lg text-xs font-bold transition-all"
+                >
+                  Refresh Source Inventory
+                </button>
               </div>
 
-              {/* Document List */}
               <div className="lg:col-span-2 space-y-4">
                 <div className="flex items-center justify-between border-b border-white/5 pb-2">
                   <h2 className="text-sm font-bold text-neutral-300 uppercase tracking-wider">
-                    Active Knowledge Documents
+                    Curated Knowledge Sources
                   </h2>
                   <span className="text-xs text-neutral-500 font-medium">({documents.length} Total)</span>
                 </div>
+
+                {ingestionJobs.some((job) => job.status !== "COMPLETED") && (
+                  <div className="space-y-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-amber-300">Ingestion status</p>
+                    {ingestionJobs.filter((job) => job.status !== "COMPLETED").map((job) => (
+                      <div key={job.id} className="rounded-lg border border-white/5 bg-black/20 p-2 text-xs text-neutral-300">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="truncate font-semibold">{job.fileName}</span>
+                          <span className={job.status === "FAILED" ? "text-red-400" : "text-amber-300"}>{job.status}</span>
+                        </div>
+                        {job.error && <p className="mt-1 text-[11px] text-red-300">{job.error}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {loading ? (
                   <div className="flex items-center justify-center py-20">
@@ -837,27 +1408,34 @@ export default function SuperAdminPage() {
                 ) : documents.length === 0 ? (
                   <div className="text-center py-16 text-neutral-500 bg-white/[0.01] border border-white/5 rounded-xl">
                     <Database className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                    <p className="text-sm font-medium">No documents in the database</p>
-                    <p className="text-xs mt-1">Upload a PDF or sync a sheet to see indexed files.</p>
+                    <p className="text-sm font-medium">No indexed sources found</p>
+                    <p className="text-xs mt-1">Add resources through the internal ingestion pipeline to populate the curated knowledge base.</p>
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                     {documents.map((doc) => (
                       <motion.div
                         key={doc.name}
-                        className="bg-white/[0.02] border border-white/5 rounded-xl p-4 hover:border-white/10 transition-all flex items-start justify-between gap-4"
-                        style={{ background: "rgba(255,255,255,0.01)", border: "1px solid rgba(201,168,76,0.06)" }}
+                        className={`bg-white/[0.02] border rounded-xl p-4 transition-all flex items-start justify-between gap-4 ${doc.isActive ? "border-white/5 hover:border-white/10" : "border-amber-500/20 opacity-75"}`}
+                        style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)" }}
                       >
                         <div className="flex items-start gap-3 flex-1 min-w-0">
-                          <div className="w-10 h-10 rounded-lg bg-teal-500/10 flex items-center justify-center shrink-0">
-                            <FileText className="w-5 h-5 text-teal-400" />
+                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${doc.isActive ? "bg-teal-500/10" : "bg-amber-500/10"}`}>
+                            <FileText className={`w-5 h-5 ${doc.isActive ? "text-teal-400" : "text-amber-300"}`} />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <h3 className="text-sm font-semibold text-white truncate">{doc.name}</h3>
-                            <span className="text-[10px] text-neutral-500 flex items-center gap-1 mt-1 font-mono">
-                              <HardDrive className="w-3 h-3" />
-                              {doc.chunkCount} chunks
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-sm font-semibold text-white truncate">{doc.name}</h3>
+                              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${doc.isActive ? "bg-emerald-500/10 text-emerald-300" : "bg-amber-500/10 text-amber-300"}`}>
+                                {doc.isActive ? "Active" : "Inactive"}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-3 text-[10px] text-neutral-500 font-mono">
+                              <span className="flex items-center gap-1"><HardDrive className="w-3 h-3" />{doc.chunkCount} chunks</span>
+                              <span>v{doc.version}</span>
+                              {doc.type && <span>{doc.type}</span>}
+                              {doc.ingested && <span>{formatTime(doc.ingested)}</span>}
+                            </div>
                             {doc.sampleText && (
                               <p className="text-[11px] text-neutral-600 mt-2 line-clamp-2 leading-relaxed font-serif italic">
                                 {doc.sampleText}...
@@ -866,18 +1444,24 @@ export default function SuperAdminPage() {
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleDeleteDocument(doc)}
-                          disabled={deleting === doc.name}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-all disabled:opacity-50"
-                        >
-                          {deleting === doc.name ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                          Delete
-                        </button>
+                        <div className="flex shrink-0 flex-col gap-2">
+                          <button
+                            onClick={() => handleToggleDocumentActive(doc)}
+                            disabled={updatingSource === doc.name}
+                            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg transition-all disabled:opacity-50 ${doc.isActive ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/20" : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20"}`}
+                          >
+                            {updatingSource === doc.name ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                            {doc.isActive ? "Deactivate" : "Activate"}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDocument(doc)}
+                            disabled={deleting === doc.name}
+                            className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-all disabled:opacity-50"
+                          >
+                            {deleting === doc.name ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                            Delete
+                          </button>
+                        </div>
                       </motion.div>
                     ))}
                   </div>
@@ -895,11 +1479,11 @@ export default function SuperAdminPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
                 <input
                   type="text"
-                  placeholder="Search queries & answers..."
+                  placeholder="Search questions & answers..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-xs text-white placeholder-neutral-500 outline-none focus:ring-1 focus:ring-blue-500/40 transition-all"
-                  style={{ background: "rgba(255,255,255,0.01)", border: "1px solid rgba(201,168,76,0.08)" }}
+                  style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)" }}
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -937,7 +1521,7 @@ export default function SuperAdminPage() {
             ) : filteredLogs.length === 0 ? (
               <div className="text-center py-20 text-neutral-500 bg-white/[0.01] border border-white/5 rounded-xl">
                 <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                <p className="text-lg font-medium">{searchQuery ? "No matching queries" : "No queries yet"}</p>
+                <p className="text-lg font-medium">{searchQuery ? "No matching questions" : "No questions yet"}</p>
                 <p className="text-sm mt-1">{searchQuery ? "Try a different search term" : "Chat interactions will appear here in real-time."}</p>
               </div>
             ) : (
@@ -946,7 +1530,7 @@ export default function SuperAdminPage() {
                   <motion.div
                     key={log.id}
                     className="bg-white/[0.02] border border-white/5 rounded-xl overflow-hidden hover:border-white/10 transition-all"
-                    style={{ background: "rgba(255,255,255,0.01)", border: "1px solid rgba(201,168,76,0.06)" }}
+                    style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)" }}
                   >
                     <button
                       onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}
@@ -1018,7 +1602,7 @@ export default function SuperAdminPage() {
                                       )}
                                     </div>
                                   );
-                                } catch (e) {
+                                } catch {
                                   return <p className="whitespace-pre-wrap">{log.answer}</p>;
                                 }
                               })()}
@@ -1036,7 +1620,7 @@ export default function SuperAdminPage() {
                                       <span>{src.file}</span>
                                       {src.page !== "?" && <span className="text-neutral-500 text-[10px]">(Page {src.page})</span>}
                                     </div>
-                                    <p className="font-serif italic text-neutral-500 line-clamp-3">"{src.text}"</p>
+                                    <p className="font-serif italic text-neutral-500 line-clamp-3">&ldquo;{src.text}&rdquo;</p>
                                   </div>
                                 ))}
                               </div>
@@ -1085,6 +1669,14 @@ export default function SuperAdminPage() {
               </button>
             </div>
 
+            <EvaluationEnginePanel
+              evaluating={evaluating}
+              elapsedMs={evaluationElapsedMs}
+              engine={evaluationEngine}
+              totalChunks={totalChunks}
+              documentsCount={documents.length}
+            />
+
             {loading ? (
               <div className="flex items-center justify-center py-20">
                 <RefreshCw className="w-6 h-6 text-amber-500 animate-spin" />
@@ -1125,7 +1717,7 @@ export default function SuperAdminPage() {
                     <div
                       key={run.id}
                       className="bg-white/[0.02] border border-white/5 rounded-xl overflow-hidden hover:border-white/10 transition-all text-xs"
-                      style={{ background: "rgba(255,255,255,0.01)", border: "1px solid rgba(201,168,76,0.06)" }}
+                      style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)" }}
                     >
                       <button
                         onClick={() => setExpandedEval(expandedEval === run.id ? null : run.id)}
@@ -1175,7 +1767,7 @@ export default function SuperAdminPage() {
                               </div>
                             </div>
 
-                            {run.details && (
+                            {Boolean(run.details) && (
                               <div>
                                 <h4 className="text-[9px] font-bold text-amber-400 uppercase tracking-widest mb-1">Execution Metrics Output Logs</h4>
                                 <pre className="bg-black/60 border border-white/5 rounded-lg p-3 font-mono text-[10px] text-neutral-400 leading-relaxed overflow-x-auto max-h-52 whitespace-pre-wrap">
@@ -1193,9 +1785,347 @@ export default function SuperAdminPage() {
             )}
           </motion.div>
         )}
-      </main>
+        {/* ── TAB: Health & Maintenance ────────────────── */}
+        {activeTab === "health" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-[14px] font-bold" style={{ color: "var(--text-primary)" }}>System Health & Maintenance</h2>
+                <p className="text-[12px] mt-1" style={{ color: "var(--text-tertiary)" }}>Real-time monitoring of database, redis, and background queues.</p>
+              </div>
+              <button onClick={fetchHealth} className="flex items-center gap-2 px-4 py-2 text-[11px] font-semibold transition-all" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 2 }}>
+                <RefreshCw size={14} /> Refresh
+              </button>
+            </div>
+
+            {loading || !healthData ? (
+              <div className="flex justify-center py-20">
+                <Loader2 className="w-6 h-6 animate-spin" style={{ color: "var(--gold-primary)" }} />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {/* DB Status */}
+                <div className="p-6 transition-all duration-200" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <Database size={18} style={{ color: "var(--gold-dim)" }} />
+                    <h3 className="text-[11px] font-semibold tracking-[0.15em] uppercase">Postgres Database</h3>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 rounded-full" style={{ background: healthData.dbHealth === "healthy" ? "#22c55e" : "#f87171" }} />
+                    <span className="text-xl font-bold uppercase">{healthData.dbHealth}</span>
+                  </div>
+                </div>
+
+                {/* Redis Status */}
+                <div className="p-6 transition-all duration-200" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <Activity size={18} style={{ color: "var(--gold-dim)" }} />
+                    <h3 className="text-[11px] font-semibold tracking-[0.15em] uppercase">Upstash Redis</h3>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 rounded-full" style={{ background: healthData.redisHealth === "healthy" ? "#22c55e" : "#f87171" }} />
+                    <span className="text-xl font-bold uppercase">{healthData.redisHealth}</span>
+                  </div>
+                </div>
+
+                {/* Queue Stats */}
+                <div className="p-6 transition-all duration-200 lg:col-span-3" style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)", borderRadius: 12 }}>
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <BarChart3 size={18} style={{ color: "var(--gold-dim)" }} />
+                      <h3 className="text-[11px] font-semibold tracking-[0.15em] uppercase">BullMQ Ingestion Queue</h3>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await fetch("/api/super-admin/health", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "clean_failed_jobs" }) });
+                          showToast("Failed jobs cleaned", "success");
+                          fetchHealth();
+                        } catch {
+                          showToast("Failed to clean jobs", "error");
+                        }
+                      }}
+                      className="px-3 py-1.5 text-[10px] font-bold tracking-[0.1em] uppercase transition-all hover:bg-red-500/20"
+                      style={{ color: "#f87171", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 2 }}>
+                      Clear Failed
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="text-center p-4 bg-white/5 rounded">
+                      <span className="text-[10px] uppercase tracking-widest text-neutral-400">Waiting</span>
+                      <p className="text-2xl font-mono mt-1 text-white">{healthData.queueStats.waiting}</p>
+                    </div>
+                    <div className="text-center p-4 bg-white/5 rounded">
+                      <span className="text-[10px] uppercase tracking-widest text-neutral-400">Active</span>
+                      <p className="text-2xl font-mono mt-1 text-blue-400">{healthData.queueStats.active}</p>
+                    </div>
+                    <div className="text-center p-4 bg-white/5 rounded">
+                      <span className="text-[10px] uppercase tracking-widest text-neutral-400">Completed</span>
+                      <p className="text-2xl font-mono mt-1 text-green-400">{healthData.queueStats.completed}</p>
+                    </div>
+                    <div className="text-center p-4 bg-white/5 rounded">
+                      <span className="text-[10px] uppercase tracking-widest text-neutral-400">Failed</span>
+                      <p className="text-2xl font-mono mt-1 text-red-400">{healthData.queueStats.failed}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+    </DashboardShell>
+  );
+}
+
+function PricingField({
+  label,
+  value,
+  type = "text",
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string | number;
+  type?: "text" | "number";
+  placeholder?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>{label}</span>
+      <input
+        type={type}
+        min={type === "number" ? 0 : undefined}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full px-3 py-2.5 text-[12px] outline-none"
+        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+      />
+    </label>
+  );
+}
+
+function PricingCheckbox({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2">
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+function AgentTextField({
+  label,
+  value,
+  maxLength,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  maxLength: number;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>{label}</span>
+      <input
+        value={value}
+        maxLength={maxLength}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full px-3 py-2.5 text-[13px] outline-none transition-all"
+        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+      />
+    </label>
+  );
+}
+
+function AgentTextarea({
+  label,
+  value,
+  maxLength,
+  rows,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  maxLength: number;
+  rows: number;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>{label}</span>
+      <textarea
+        value={value}
+        maxLength={maxLength}
+        rows={rows}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full resize-y px-3 py-2.5 text-[13px] leading-relaxed outline-none transition-all"
+        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
+      />
+      <span className="mt-1 block text-right text-[10px]" style={{ color: "var(--text-tertiary)" }}>{value.length}/{maxLength}</span>
+    </label>
+  );
+}
+
+function EvaluationEnginePanel({
+  evaluating,
+  elapsedMs,
+  engine,
+  totalChunks,
+  documentsCount,
+}: {
+  evaluating: boolean;
+  elapsedMs: number;
+  engine: EvaluationEngineSnapshot | null;
+  totalChunks: number;
+  documentsCount: number;
+}) {
+  const activeChunks = engine?.activeChunks ?? totalChunks;
+  const sourceDocuments = engine?.sourceDocuments ?? documentsCount;
+  const pendingJobs = engine?.pendingJobs ?? 0;
+  const processingJobs = engine?.processingJobs ?? 0;
+  const staticCases = engine?.staticCases ?? 6;
+  const syntheticSeedChunks = engine?.syntheticSeedChunks ?? Math.min(activeChunks, 2);
+  const totalPlannedCases = staticCases + syntheticSeedChunks;
+  const phase = getEvaluationPhase(elapsedMs);
+  const hasActiveIngestion = pendingJobs + processingJobs > 0;
+
+  return (
+    <div
+      className="p-4"
+      style={{
+        background: evaluating ? "rgba(245,158,11,0.08)" : "var(--dashboard-card)",
+        border: evaluating ? "1px solid rgba(245,158,11,0.25)" : "1px solid var(--dashboard-border)",
+        borderRadius: 12,
+      }}
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-300">
+            {evaluating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Activity className="h-5 w-5" />}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--text-tertiary)" }}>
+              {evaluating ? "Active RAG Evaluation Running" : "Active RAG Evaluation Ready"}
+            </p>
+            <p className="mt-1 text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>
+              {evaluating ? phase.label : `${totalPlannedCases} planned checks against the active knowledge base`}
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--text-tertiary)" }}>
+              {evaluating
+                ? phase.hint
+                : "Benchmark uses current chunks, retrieval/reranking, answer generation, verification, and LLM-as-judge scoring."}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
+          <EngineSignal icon={<HardDrive className="h-3.5 w-3.5" />} label="Chunks" value={activeChunks.toLocaleString()} tone={activeChunks > 0 ? "good" : "warn"} />
+          <EngineSignal icon={<FileText className="h-3.5 w-3.5" />} label="Sources" value={sourceDocuments.toLocaleString()} tone={sourceDocuments > 0 ? "good" : "warn"} />
+          <EngineSignal icon={<Search className="h-3.5 w-3.5" />} label="Cases" value={totalPlannedCases.toLocaleString()} tone="good" />
+          <EngineSignal icon={<Clock className="h-3.5 w-3.5" />} label={evaluating ? "Elapsed" : "Last Run"} value={evaluating ? formatDuration(elapsedMs) : formatLatestEvaluationRun(engine)} tone={evaluating ? "warn" : "good"} />
+        </div>
+      </div>
+
+      {(evaluating || hasActiveIngestion) && (
+        <div className="mt-4 border-t border-white/5 pt-4">
+          {evaluating && (
+            <div>
+              <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--text-tertiary)" }}>
+                <span>{phase.label}</span>
+                <span>{Math.round(phase.progress)}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-amber-400 transition-all duration-500" style={{ width: `${phase.progress}%` }} />
+              </div>
+            </div>
+          )}
+
+          {hasActiveIngestion && (
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/15 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {pendingJobs} pending and {processingJobs} processing ingestion job(s). Evaluation uses only chunks already active in Postgres.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function EngineSignal({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tone: "good" | "warn";
+}) {
+  return (
+    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+      <div className={`mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest ${tone === "good" ? "text-emerald-300" : "text-amber-300"}`}>
+        {icon}
+        {label}
+      </div>
+      <p className="truncate font-mono text-sm font-bold" style={{ color: "var(--text-primary)" }}>{value}</p>
+    </div>
+  );
+}
+
+function getEvaluationPhase(elapsedMs: number) {
+  const elapsedSeconds = elapsedMs / 1000;
+  if (elapsedSeconds < 5) {
+    return {
+      label: "Preparing synthetic cases",
+      hint: "Sampling active chunks and generating benchmark prompts.",
+      progress: Math.max(8, elapsedSeconds * 8),
+    };
+  }
+  if (elapsedSeconds < 25) {
+    return {
+      label: "Running retrieval and agent graph",
+      hint: "Classifying questions, retrieving chunks, reranking context, and generating grounded answers.",
+      progress: 40 + ((elapsedSeconds - 5) / 20) * 32,
+    };
+  }
+  if (elapsedSeconds < 50) {
+    return {
+      label: "Scoring with LLM judges",
+      hint: "Checking faithfulness, answer relevance, context precision, and safety routing.",
+      progress: 72 + ((elapsedSeconds - 25) / 25) * 20,
+    };
+  }
+  return {
+    label: "Finalizing report",
+    hint: "Saving the benchmark run and refreshing evaluation history.",
+    progress: 95,
+  };
+}
+
+function formatDuration(value: number) {
+  const totalSeconds = Math.max(0, Math.floor(value / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function formatLatestEvaluationRun(engine: EvaluationEngineSnapshot | null) {
+  if (!engine?.latestRun) return "None";
+  return `${(engine.latestRun.overallScore * 100).toFixed(1)}%`;
 }
 
 // ── Stat Card Component ────────────────────────────────────────────────
@@ -1215,7 +2145,7 @@ function StatCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 hover:border-white/10 transition-all"
-      style={{ background: "rgba(255,255,255,0.01)", border: "1px solid rgba(201,168,76,0.06)" }}
+      style={{ background: "var(--dashboard-card)", border: "1px solid var(--dashboard-border)" }}
     >
       <div className="flex items-center gap-3">
         <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center opacity-85 shrink-0`}>
@@ -1240,8 +2170,8 @@ function EvalMetricCard({ label, val, highlighted }: { label: string; val: numbe
         : "bg-white/5 border-white/5 text-neutral-200"
     }`}
       style={{
-        background: highlighted ? "rgba(201,168,76,0.06)" : "rgba(255,255,255,0.01)",
-        borderColor: highlighted ? "rgba(201,168,76,0.2)" : "rgba(201,168,76,0.06)"
+        background: highlighted ? "var(--gold-glow)" : "var(--dashboard-card)",
+        borderColor: highlighted ? "var(--border-active)" : "var(--dashboard-border)"
       }}
     >
       <span className="text-[10px] uppercase font-bold tracking-wider opacity-60 block">{label}</span>

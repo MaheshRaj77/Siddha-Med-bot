@@ -3,13 +3,14 @@
 import { useState, useEffect, useCallback, JSX } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Database, MessageSquare, Trash2, RefreshCw,
+  Database, MessageSquare, Trash2, RefreshCw,
   FileText, Clock, Zap, HardDrive, Search, ChevronDown,
-  ChevronUp, AlertTriangle, Shield, Activity, UploadCloud,
-  Link as LinkIcon, Loader2, Sparkles, CheckCircle2,
+  ChevronUp, AlertTriangle, Activity,
+  Loader2, Sparkles, CheckCircle2, BarChart3, UploadCloud,
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DashboardShell } from "@/components/product/DashboardShell";
+import { AnalyticsDashboard } from "@/components/admin/AnalyticsDashboard";
 
 interface ChatLog {
   id: string;
@@ -25,6 +26,22 @@ interface Document {
   chunkCount: number;
   ids: string[];
   sampleText: string;
+  source: "chroma" | "postgres";
+  type: string | null;
+  sourceUrl: string | null;
+  documentHash: string | null;
+  version: number;
+  isActive: boolean;
+  ingested: string | null;
+  updatedAt: string | null;
+}
+
+interface IngestionJobRow {
+  id: string;
+  fileName: string;
+  status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | string;
+  chunksCount: number;
+  error: string | null;
 }
 
 interface Stats {
@@ -40,16 +57,86 @@ interface EvaluationRun {
   answerRelevance: number;
   contextPrecision: number;
   overallScore: number;
-  details: string;
+  details: unknown;
+}
+
+interface EvaluationEngineSnapshot {
+  activeChunks: number;
+  sourceDocuments: number;
+  pendingJobs: number;
+  processingJobs: number;
+  staticCases: number;
+  syntheticSeedChunks: number;
+  latestRun?: {
+    id: string;
+    timestamp: string;
+    overallScore: number;
+  } | null;
+}
+
+interface EvaluationReportSummary {
+  totalCases: number;
+  staticCases: number;
+  syntheticCases: number;
+  passedCases: number;
+  failedCases: number;
+  passRate: number;
+  safetyAccuracy: number;
+  retrievalCoverage: number;
+  averageLatencyMs: number;
+  p95LatencyMs: number;
+}
+
+interface EvaluationCaseResult {
+  query: string;
+  expectedTopic: string;
+  source: "static" | "synthetic";
+  expectedMedical: boolean;
+  requiresContext: boolean;
+  actualMedical: boolean;
+  classificationCorrect: boolean;
+  retrievedChunkCount: number;
+  verified: boolean;
+  needsDoctor: boolean;
+  passed: boolean;
+  issues: string[];
+  answer: string;
+  contexts: string[];
+  error?: string;
+  metrics: {
+    faithfulness: number;
+    answerRelevance: number;
+    contextPrecision: number;
+    overall: number;
+    latencyMs: number;
+  };
+}
+
+interface EvaluationReport {
+  version: 2;
+  generatedAt: string;
+  summary: EvaluationReportSummary;
+  cases: EvaluationCaseResult[];
+}
+
+interface AuthUser {
+  id: string;
+  email: string;
+  role: "SUPER_ADMIN" | "ADMIN" | "USER";
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }
 
 export default function AdminPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"documents" | "logs" | "evaluations">("documents");
+  const [activeTab, setActiveTab] = useState<"analytics" | "documents" | "logs" | "evaluations">("analytics");
   const [logs, setLogs] = useState<ChatLog[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [ingestionJobs, setIngestionJobs] = useState<IngestionJobRow[]>([]);
   const [evalRuns, setEvalRuns] = useState<EvaluationRun[]>([]);
   const [stats, setStats] = useState<Stats>({ totalQueries: 0, avgResponseMs: 0, uniqueSourceFiles: 0 });
   const [totalChunks, setTotalChunks] = useState(0);
@@ -60,10 +147,14 @@ export default function AdminPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   
-  // Ingestion & Eval States
+  // Knowledge base & evaluation state
+  const [updatingSource, setUpdatingSource] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sheetUrl, setSheetUrl] = useState("");
   const [evaluating, setEvaluating] = useState(false);
+  const [evaluationStartedAt, setEvaluationStartedAt] = useState<number | null>(null);
+  const [evaluationElapsedMs, setEvaluationElapsedMs] = useState(0);
+  const [evaluationEngine, setEvaluationEngine] = useState<EvaluationEngineSnapshot | null>(null);
 
   const showToast = (msg: string, type: "success" | "error") => {
     setToast({ msg, type });
@@ -90,6 +181,7 @@ export default function AdminPage() {
       if (res.ok) {
         setDocuments(data.documents || []);
         setTotalChunks(data.totalChunks || 0);
+        setIngestionJobs(data.jobs || []);
       }
     } catch (e) {
       console.error("Failed to fetch documents:", e);
@@ -102,6 +194,7 @@ export default function AdminPage() {
       const data = await res.json();
       if (res.ok) {
         setEvalRuns(data.runs || []);
+        setEvaluationEngine(data.engine || null);
       }
     } catch (e) {
       console.error("Failed to fetch evaluations:", e);
@@ -120,68 +213,125 @@ export default function AdminPage() {
       try {
         const res = await fetch("/api/auth/me");
         const data = await res.json();
-        if (!data.user || (data.user.role !== "ADMIN" && data.user.role !== "SUPER_ADMIN")) {
-          router.push("/chat");
+        if (!res.ok) {
+          showToast(data.error || "Unable to verify your session. Please refresh once.", "error");
+          return;
+        }
+        if (!data.user) {
+          router.replace("/login");
+          return;
+        }
+        if (data.user.role === "SUPER_ADMIN") {
+          router.replace("/super-admin");
+          return;
+        }
+        if (data.user.role !== "ADMIN") {
+          router.replace("/chat");
           return;
         }
         setCurrentUser(data.user);
-      } catch (err) {
-        router.push("/login");
+      } catch {
+        showToast("Unable to verify your session. Please refresh once.", "error");
       }
     })();
   }, [router]);
 
   useEffect(() => {
-    if (currentUser) {
-      loadAll();
-    }
+    if (!currentUser) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void loadAll();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser, loadAll]);
 
-  // File Upload Ingestion
+  // Poll ingestion jobs if any are pending/processing
+  useEffect(() => {
+    const hasActiveJobs = ingestionJobs.some(
+      (job) => job.status === "PENDING" || job.status === "PROCESSING"
+    );
+    if (!hasActiveJobs) return;
+
+    const interval = setInterval(() => {
+      fetchDocuments();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [ingestionJobs, fetchDocuments]);
+
+  useEffect(() => {
+    if (!evaluating || !evaluationStartedAt) return;
+
+    const interval = setInterval(() => {
+      setEvaluationElapsedMs(Date.now() - evaluationStartedAt);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [evaluating, evaluationStartedAt]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     setUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const res = await fetch("/api/ingest", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      showToast(`✅ "${file.name}" uploaded successfully!`, "success");
+      const results = await Promise.allSettled(Array.from(files).map(async (file) => {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/ingest", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(`"${file.name}": ${data.error}`);
+        return data.message || `"${file.name}" queued.`;
+      }));
+
+      const failures = results.filter((result) => result.status === "rejected") as PromiseRejectedResult[];
+      if (failures.length > 0) {
+        showToast(`Failed to add some resources: ${failures.map((failure) => failure.reason.message).join(", ")}`, "error");
+      } else {
+        showToast(`Started indexing ${results.length} resource(s).`, "success");
+      }
       await fetchDocuments();
-    } catch (err: any) {
-      showToast(`Upload failed: ${err.message}`, "error");
+    } catch (err: unknown) {
+      showToast(`Knowledge add failed: ${getErrorMessage(err, "Unknown add error")}`, "error");
     } finally {
       setUploading(false);
       e.target.value = "";
     }
   };
 
-  // Google Sheets Ingestion
   const handleSheetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sheetUrl) return;
+    const urls = sheetUrl
+      .split(/[\n,]/)
+      .map((url) => url.trim())
+      .filter(Boolean);
+    if (urls.length === 0) return;
 
     setUploading(true);
     try {
-      const res = await fetch("/api/ingest/sheet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: sheetUrl }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      showToast(`✅ Google Sheet synced successfully!`, "success");
+      const results = await Promise.allSettled(urls.map(async (url) => {
+        const res = await fetch("/api/ingest/sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(`"${url}": ${data.error}`);
+        return data.message || `"${url}" queued.`;
+      }));
+
+      const failures = results.filter((result) => result.status === "rejected") as PromiseRejectedResult[];
+      if (failures.length > 0) {
+        showToast(`Failed to sync some resources: ${failures.map((failure) => failure.reason.message).join(", ")}`, "error");
+      } else {
+        showToast(`Started syncing ${results.length} source(s).`, "success");
+      }
       setSheetUrl("");
       await fetchDocuments();
-    } catch (err: any) {
-      showToast(`Sheet sync failed: ${err.message}`, "error");
+    } catch (err: unknown) {
+      showToast(`Sheet sync failed: ${getErrorMessage(err, "Unknown sync error")}`, "error");
     } finally {
       setUploading(false);
     }
@@ -192,37 +342,60 @@ export default function AdminPage() {
     if (!confirm("Start advanced synthetic Ragas-style evaluation benchmark? This runs multiple Llama-3.3 checking iterations and takes ~30-45 seconds.")) return;
     
     setEvaluating(true);
+    setEvaluationStartedAt(Date.now());
+    setEvaluationElapsedMs(0);
     try {
       const res = await fetch("/api/admin/evaluate", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (data.engine) setEvaluationEngine(data.engine);
       showToast("✅ Benchmark evaluation run complete!", "success");
       await fetchEvaluations();
-    } catch (e: any) {
-      showToast(`Evaluation run failed: ${e.message}`, "error");
+    } catch (e: unknown) {
+      showToast(`Evaluation run failed: ${getErrorMessage(e, "Unknown evaluation error")}`, "error");
     } finally {
       setEvaluating(false);
+      setEvaluationStartedAt(null);
     }
   };
 
   const handleDeleteDocument = async (doc: Document) => {
-    if (!confirm(`Delete "${doc.name}"? This will remove ${doc.chunkCount} chunks from ChromaDB. This action cannot be undone.`)) return;
+    if (!confirm(`Delete "${doc.name}"? This will remove ${doc.chunkCount} chunks from the active knowledge base. This action cannot be undone.`)) return;
 
     setDeleting(doc.name);
     try {
       const res = await fetch("/api/admin/documents", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: doc.ids }),
+        body: JSON.stringify({ name: doc.name, ids: doc.ids }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       showToast(`Deleted "${doc.name}" (${doc.chunkCount} chunks)`, "success");
       await fetchDocuments();
-    } catch (e: any) {
-      showToast(`Failed to delete: ${e.message}`, "error");
+    } catch (e: unknown) {
+      showToast(`Failed to delete: ${getErrorMessage(e, "Unknown delete error")}`, "error");
     } finally {
       setDeleting(null);
+    }
+  };
+
+  const handleToggleDocumentActive = async (doc: Document) => {
+    setUpdatingSource(doc.name);
+    try {
+      const res = await fetch("/api/admin/documents", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: doc.name, isActive: !doc.isActive }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      showToast(`${doc.name} ${doc.isActive ? "deactivated" : "activated"}`, "success");
+      await fetchDocuments();
+    } catch (e: unknown) {
+      showToast(`Failed to update source: ${getErrorMessage(e, "Unknown update error")}`, "error");
+    } finally {
+      setUpdatingSource(null);
     }
   };
 
@@ -235,9 +408,15 @@ export default function AdminPage() {
         setStats({ totalQueries: 0, avgResponseMs: 0, uniqueSourceFiles: 0 });
         showToast("Chat logs cleared", "success");
       }
-    } catch (e: any) {
+    } catch {
       showToast("Failed to clear logs", "error");
     }
+  };
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/login", { method: "DELETE" });
+    router.replace("/login");
+    router.refresh();
   };
 
   const filteredLogs = searchQuery
@@ -254,9 +433,52 @@ export default function AdminPage() {
       day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
   };
+  const activeDocuments = documents.filter((doc) => doc.isActive);
+  const inactiveDocuments = documents.filter((doc) => !doc.isActive);
+  const activeChunks = activeDocuments.reduce((sum, doc) => sum + doc.chunkCount, 0);
 
   return (
-    <div className="min-h-screen bg-[#060606] text-white font-sans">
+    <DashboardShell
+      role="Doctor Admin"
+      eyebrow="Knowledge Operations"
+      title="Doctor Admin Workspace"
+      description="Curate the Siddha knowledge base, review conversations, and measure answer quality."
+      email={currentUser?.email}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      onRefresh={loadAll}
+      refreshing={loading}
+      onLogout={handleLogout}
+      navItems={[
+        {
+          id: "analytics",
+          label: "Analytics",
+          description: "Search and engagement trends",
+          icon: <BarChart3 className="h-4 w-4" />,
+        },
+        {
+          id: "documents",
+          label: "Knowledge Base",
+          description: "Curated source controls",
+          icon: <Database className="h-4 w-4" />,
+          count: documents.length,
+        },
+        {
+          id: "logs",
+          label: "Query Logs",
+          description: "Review assistant activity",
+          icon: <Activity className="h-4 w-4" />,
+          count: logs.length,
+        },
+        {
+          id: "evaluations",
+          label: "Ragas Evaluations",
+          description: "Track answer quality",
+          icon: <Sparkles className="h-4 w-4" />,
+          count: evalRuns.length,
+        },
+      ]}
+    >
       {/* Toast */}
       <AnimatePresence>
         {toast && (
@@ -275,110 +497,35 @@ export default function AdminPage() {
         )}
       </AnimatePresence>
 
-      {/* Header */}
-      <header className="sticky top-0 z-40 bg-[#060606]/80 backdrop-blur-xl border-b border-white/5">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/chat"
-              className="flex items-center gap-2 text-neutral-400 hover:text-white transition-colors text-sm"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Chat
-            </Link>
-            <div className="w-px h-6 bg-white/10" />
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
-                <Shield className="w-4 h-4 text-white" />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-white">Super Admin</h1>
-                <p className="text-[10px] text-neutral-500 uppercase tracking-widest">MedBot Control Panel</p>
-              </div>
-            </div>
-          </div>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <StatCard
+          icon={<MessageSquare className="w-5 h-5 animate-pulse" />}
+          label="Total Queries"
+          value={stats.totalQueries.toString()}
+          color="from-blue-500 to-indigo-600"
+        />
+        <StatCard
+          icon={<Zap className="w-5 h-5" />}
+          label="Avg Response"
+          value={stats.avgResponseMs > 0 ? `${(stats.avgResponseMs / 1000).toFixed(1)}s` : "—"}
+          color="from-amber-500 to-orange-600"
+        />
+        <StatCard
+          icon={<HardDrive className="w-5 h-5" />}
+          label="Total Chunks"
+          value={totalChunks.toString()}
+          color="from-teal-500 to-emerald-600"
+        />
+        <StatCard
+          icon={<FileText className="w-5 h-5" />}
+          label="Documents"
+          value={documents.length.toString()}
+          color="from-purple-500 to-pink-600"
+        />
+      </div>
 
-          <button
-            onClick={loadAll}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            icon={<MessageSquare className="w-5 h-5 animate-pulse" />}
-            label="Total Queries"
-            value={stats.totalQueries.toString()}
-            color="from-blue-500 to-indigo-600"
-          />
-          <StatCard
-            icon={<Zap className="w-5 h-5" />}
-            label="Avg Response"
-            value={stats.avgResponseMs > 0 ? `${(stats.avgResponseMs / 1000).toFixed(1)}s` : "—"}
-            color="from-amber-500 to-orange-600"
-          />
-          <StatCard
-            icon={<HardDrive className="w-5 h-5" />}
-            label="Total Chunks"
-            value={totalChunks.toString()}
-            color="from-teal-500 to-emerald-600"
-          />
-          <StatCard
-            icon={<FileText className="w-5 h-5" />}
-            label="Documents"
-            value={documents.length.toString()}
-            color="from-purple-500 to-pink-600"
-          />
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="flex gap-1 bg-white/5 p-1 rounded-xl w-fit border border-white/5">
-          <button
-            onClick={() => setActiveTab("documents")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              activeTab === "documents"
-                ? "bg-teal-500/20 text-teal-400 border border-teal-500/30"
-                : "text-neutral-400 hover:text-white"
-            }`}
-          >
-            <Database className="w-4 h-4" />
-            Database & Ingestion
-          </button>
-          <button
-            onClick={() => setActiveTab("logs")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              activeTab === "logs"
-                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                : "text-neutral-400 hover:text-white"
-            }`}
-          >
-            <Activity className="w-4 h-4" />
-            Query Logs
-          </button>
-          <button
-            onClick={() => setActiveTab("evaluations")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              activeTab === "evaluations"
-                ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                : "text-neutral-400 hover:text-white"
-            }`}
-          >
-            <Sparkles className="w-4 h-4" />
-            Ragas Evaluations
-            {evalRuns.length > 0 && (
-              <span className="bg-amber-500/20 text-amber-400 text-xs px-2 py-0.5 rounded-full">
-                {evalRuns.length}
-              </span>
-            )}
-          </button>
-        </div>
+        {activeTab === "analytics" && <AnalyticsDashboard />}
 
         {/* Tab Content: Documents Ingestion */}
         {activeTab === "documents" && (
@@ -387,70 +534,81 @@ export default function AdminPage() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Document Ingest Panel */}
-              <div className="lg:col-span-1 bg-white/[0.02] border border-white/5 rounded-2xl p-6 space-y-6">
-                <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Document Ingestion</h3>
-                  <p className="text-xs text-neutral-500 mt-1 leading-normal">Add PDFs or Google Sheets to enrich the Siddha Knowledge base.</p>
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <StatCard icon={<FileText className="w-5 h-5" />} label="Active Sources" value={activeDocuments.length.toString()} color="from-emerald-500 to-teal-600" />
+              <StatCard icon={<HardDrive className="w-5 h-5" />} label="Active Chunks" value={activeChunks.toString()} color="from-blue-500 to-indigo-600" />
+              <StatCard icon={<AlertTriangle className="w-5 h-5" />} label="Inactive Sources" value={inactiveDocuments.length.toString()} color="from-amber-500 to-orange-600" />
+            </div>
 
-                {/* Upload File */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest">Upload Local PDF / CSV</h4>
-                  <label className="flex flex-col items-center justify-center w-full h-36 border border-dashed border-white/10 rounded-xl cursor-pointer bg-white/5 hover:bg-white/10 hover:border-teal-500/30 transition-all group relative">
-                    <div className="flex flex-col items-center justify-center p-4 text-center">
-                      {uploading ? (
-                        <Loader2 className="w-7 h-7 text-teal-400 animate-spin mb-2" />
-                      ) : (
-                        <UploadCloud className="w-7 h-7 text-neutral-400 group-hover:text-teal-400 transition-colors mb-2" />
-                      )}
-                      <p className="text-xs text-neutral-400 group-hover:text-neutral-300 font-medium">
-                        <span className="font-semibold text-teal-400">Click to upload</span> or drag files
-                      </p>
-                      <p className="text-[10px] text-neutral-600 mt-1">PDF, CSV up to 15MB</p>
-                    </div>
-                    <input type="file" className="hidden" accept=".pdf,.csv" onChange={handleFileUpload} disabled={uploading} />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-1 bg-white/[0.02] border border-white/5 rounded-2xl p-6 space-y-5">
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Knowledge Base Policy</h3>
+                  <p className="text-xs text-neutral-500 mt-1 leading-normal">Users can ask only from curated resources already indexed in this project. Deactivated sources are hidden from retrieval without deleting their chunks.</p>
+                </div>
+                <div className="space-y-3 text-xs text-neutral-400">
+                  <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Source-grounded answers only</p>
+                  <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Activation controls retrieval visibility</p>
+                  <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Admins can add, deactivate, or delete platform knowledge</p>
+                </div>
+                <div className="space-y-3 rounded-xl border border-white/5 bg-black/20 p-3">
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-neutral-300">Add Internal Resource</h4>
+                  <label className="flex h-28 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 text-center transition hover:border-teal-500/30 hover:bg-white/10">
+                    {uploading ? <Loader2 className="mb-2 h-6 w-6 animate-spin text-teal-400" /> : <UploadCloud className="mb-2 h-6 w-6 text-teal-400" />}
+                    <span className="text-xs font-bold text-neutral-300">Add PDF, CSV, or XLSX</span>
+                    <span className="mt-1 text-[10px] text-neutral-600">Admin-only corpus indexing</span>
+                    <input type="file" className="hidden" accept=".pdf,.csv,.xlsx" onChange={handleFileUpload} disabled={uploading} multiple />
                   </label>
                 </div>
-
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="absolute inset-0 flex items-center"><span className="w-full border-t border-white/5"></span></span>
-                  <span className="relative bg-[#060606] px-2 text-neutral-600 font-bold">Or</span>
-                </div>
-
-                {/* Google Sheet Sync */}
-                <form onSubmit={handleSheetSubmit} className="space-y-3">
-                  <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest">Sync Google Sheet dataset</h4>
-                  <div className="relative">
-                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-                    <input
-                      type="url"
-                      placeholder="Paste Google Sheets link..."
-                      value={sheetUrl}
-                      onChange={(e) => setSheetUrl(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-xs text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-teal-500/40 transition-all font-mono"
-                      disabled={uploading}
-                    />
-                  </div>
+                <form onSubmit={handleSheetSubmit} className="space-y-3 rounded-xl border border-white/5 bg-black/20 p-3">
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-neutral-300">Sync Sheet Resource</h4>
+                  <textarea
+                    placeholder="Paste Google Sheets links, one per line"
+                    value={sheetUrl}
+                    onChange={(event) => setSheetUrl(event.target.value)}
+                    rows={3}
+                    disabled={uploading}
+                    className="w-full resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white outline-none placeholder:text-neutral-600 focus:border-teal-500/40"
+                  />
                   <button
                     type="submit"
-                    disabled={!sheetUrl || uploading}
-                    className="w-full bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/20 py-2 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                    disabled={!sheetUrl.trim() || uploading}
+                    className="w-full rounded-lg border border-teal-500/20 bg-teal-500/10 py-2 text-xs font-bold text-teal-400 transition hover:bg-teal-500/20 disabled:opacity-50"
                   >
-                    {uploading ? "Syncing..." : "Sync Google Sheet"}
+                    {uploading ? "Indexing..." : "Sync Sheet Into Knowledge Base"}
                   </button>
                 </form>
+                <button
+                  type="button"
+                  onClick={fetchDocuments}
+                  className="w-full bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/20 py-2 rounded-lg text-xs font-bold transition-all"
+                >
+                  Refresh Source Inventory
+                </button>
               </div>
 
-              {/* Document List */}
               <div className="lg:col-span-2 space-y-4">
                 <div className="flex items-center justify-between border-b border-white/5 pb-2">
                   <h2 className="text-md font-bold text-neutral-300">
-                    Active Knowledge Documents
+                    Curated Knowledge Sources
                   </h2>
                   <span className="text-xs text-neutral-500 font-medium">({documents.length} Total)</span>
                 </div>
+
+                {ingestionJobs.some((job) => job.status !== "COMPLETED") && (
+                  <div className="space-y-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+                    <p className="text-xs font-bold uppercase tracking-widest text-amber-300">Ingestion status</p>
+                    {ingestionJobs.filter((job) => job.status !== "COMPLETED").map((job) => (
+                      <div key={job.id} className="rounded-lg border border-white/5 bg-black/20 p-2 text-xs text-neutral-300">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="truncate font-semibold">{job.fileName}</span>
+                          <span className={job.status === "FAILED" ? "text-red-400" : "text-amber-300"}>{job.status}</span>
+                        </div>
+                        {job.error && <p className="mt-1 text-[11px] text-red-300">{job.error}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {loading ? (
                   <div className="flex items-center justify-center py-20">
@@ -459,26 +617,33 @@ export default function AdminPage() {
                 ) : documents.length === 0 ? (
                   <div className="text-center py-16 text-neutral-500 bg-white/[0.01] border border-white/5 rounded-xl">
                     <Database className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                    <p className="text-sm font-medium">No documents in the database</p>
-                    <p className="text-xs mt-1">Upload a PDF or sync a sheet to see files indexed.</p>
+                    <p className="text-sm font-medium">No indexed sources found</p>
+                    <p className="text-xs mt-1">Add resources through the internal ingestion pipeline to populate the curated knowledge base.</p>
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                     {documents.map((doc) => (
                       <motion.div
                         key={doc.name}
-                        className="bg-white/[0.02] border border-white/5 rounded-xl p-4 hover:border-white/10 transition-all flex items-start justify-between gap-4"
+                        className={`bg-white/[0.02] border rounded-xl p-4 transition-all flex items-start justify-between gap-4 ${doc.isActive ? "border-white/5 hover:border-white/10" : "border-amber-500/20 opacity-75"}`}
                       >
                         <div className="flex items-start gap-3 flex-1 min-w-0">
-                          <div className="w-10 h-10 rounded-lg bg-teal-500/10 flex items-center justify-center shrink-0">
-                            <FileText className="w-5 h-5 text-teal-400" />
+                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${doc.isActive ? "bg-teal-500/10" : "bg-amber-500/10"}`}>
+                            <FileText className={`w-5 h-5 ${doc.isActive ? "text-teal-400" : "text-amber-300"}`} />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <h3 className="text-sm font-semibold text-white truncate">{doc.name}</h3>
-                            <span className="text-[10px] text-neutral-500 flex items-center gap-1 mt-1 font-mono">
-                              <HardDrive className="w-3 h-3" />
-                              {doc.chunkCount} chunks
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-sm font-semibold text-white truncate">{doc.name}</h3>
+                              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${doc.isActive ? "bg-emerald-500/10 text-emerald-300" : "bg-amber-500/10 text-amber-300"}`}>
+                                {doc.isActive ? "Active" : "Inactive"}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-3 text-[10px] text-neutral-500 font-mono">
+                              <span className="flex items-center gap-1"><HardDrive className="w-3 h-3" />{doc.chunkCount} chunks</span>
+                              <span>v{doc.version}</span>
+                              {doc.type && <span>{doc.type}</span>}
+                              {doc.ingested && <span>{formatTime(doc.ingested)}</span>}
+                            </div>
                             {doc.sampleText && (
                               <p className="text-[11px] text-neutral-600 mt-2 line-clamp-2 leading-relaxed">
                                 {doc.sampleText}...
@@ -487,18 +652,24 @@ export default function AdminPage() {
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleDeleteDocument(doc)}
-                          disabled={deleting === doc.name}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-all disabled:opacity-50"
-                        >
-                          {deleting === doc.name ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                          Delete
-                        </button>
+                        <div className="flex shrink-0 flex-col gap-2">
+                          <button
+                            onClick={() => handleToggleDocumentActive(doc)}
+                            disabled={updatingSource === doc.name}
+                            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg transition-all disabled:opacity-50 ${doc.isActive ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/20" : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20"}`}
+                          >
+                            {updatingSource === doc.name ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                            {doc.isActive ? "Deactivate" : "Activate"}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDocument(doc)}
+                            disabled={deleting === doc.name}
+                            className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-all disabled:opacity-50"
+                          >
+                            {deleting === doc.name ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                            Delete
+                          </button>
+                        </div>
                       </motion.div>
                     ))}
                   </div>
@@ -520,7 +691,7 @@ export default function AdminPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
                 <input
                   type="text"
-                  placeholder="Search queries & answers..."
+                  placeholder="Search questions & answers..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-xs text-white placeholder-neutral-500 outline-none focus:ring-1 focus:ring-blue-500/40 transition-all"
@@ -562,7 +733,7 @@ export default function AdminPage() {
               <div className="text-center py-20 text-neutral-500 bg-white/[0.01] border border-white/5 rounded-xl">
                 <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-30" />
                 <p className="text-lg font-medium">
-                  {searchQuery ? "No matching queries" : "No queries yet"}
+                  {searchQuery ? "No matching questions" : "No questions yet"}
                 </p>
                 <p className="text-sm mt-1">
                   {searchQuery ? "Try a different search term" : "Chat interactions will appear here in real-time."}
@@ -649,7 +820,7 @@ export default function AdminPage() {
                                       )}
                                     </div>
                                   );
-                                } catch (e) {
+                                } catch {
                                   return <p className="whitespace-pre-wrap">{log.answer}</p>;
                                 }
                               })()}
@@ -667,7 +838,7 @@ export default function AdminPage() {
                                       <span>{src.file}</span>
                                       {src.page !== "?" && <span className="text-neutral-500 text-[10px]">(Page {src.page})</span>}
                                     </div>
-                                    <p className="font-serif italic text-neutral-500 line-clamp-3">"{src.text}"</p>
+                                    <p className="font-serif italic text-neutral-500 line-clamp-3">&ldquo;{src.text}&rdquo;</p>
                                   </div>
                                 ))}
                               </div>
@@ -720,6 +891,14 @@ export default function AdminPage() {
               </button>
             </div>
 
+            <EvaluationEnginePanel
+              evaluating={evaluating}
+              elapsedMs={evaluationElapsedMs}
+              engine={evaluationEngine}
+              totalChunks={totalChunks}
+              documentsCount={documents.length}
+            />
+
             {loading ? (
               <div className="flex items-center justify-center py-20">
                 <RefreshCw className="w-6 h-6 text-amber-500 animate-spin" />
@@ -750,6 +929,7 @@ export default function AdminPage() {
                       <EvalMetricCard label="Mean Precision" val={evalRuns[0].contextPrecision} />
                       <EvalMetricCard label="Mean Overall Score" val={evalRuns[0].overallScore} highlighted />
                     </div>
+                    <LatestEvaluationOperations details={evalRuns[0].details} />
                   </div>
                 )}
 
@@ -809,14 +989,7 @@ export default function AdminPage() {
                               </div>
                             </div>
 
-                            {run.details && (
-                              <div>
-                                <h4 className="text-[9px] font-bold text-amber-400 uppercase tracking-widest mb-1">Execution Metrics Output Logs</h4>
-                                <pre className="bg-black/60 border border-white/5 rounded-lg p-3 font-mono text-[10px] text-neutral-400 leading-relaxed overflow-x-auto max-h-52 whitespace-pre-wrap">
-                                  {typeof run.details === "string" ? run.details : JSON.stringify(run.details, null, 2)}
-                                </pre>
-                              </div>
-                            )}
+                            <EvaluationRunDiagnostics details={run.details} />
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -827,9 +1000,151 @@ export default function AdminPage() {
             )}
           </motion.div>
         )}
-      </main>
+    </DashboardShell>
+  );
+}
+
+function EvaluationEnginePanel({
+  evaluating,
+  elapsedMs,
+  engine,
+  totalChunks,
+  documentsCount,
+}: {
+  evaluating: boolean;
+  elapsedMs: number;
+  engine: EvaluationEngineSnapshot | null;
+  totalChunks: number;
+  documentsCount: number;
+}) {
+  const activeChunks = engine?.activeChunks ?? totalChunks;
+  const sourceDocuments = engine?.sourceDocuments ?? documentsCount;
+  const pendingJobs = engine?.pendingJobs ?? 0;
+  const processingJobs = engine?.processingJobs ?? 0;
+  const staticCases = engine?.staticCases ?? 6;
+  const syntheticSeedChunks = engine?.syntheticSeedChunks ?? Math.min(activeChunks, 2);
+  const totalPlannedCases = staticCases + syntheticSeedChunks;
+  const phase = getEvaluationPhase(elapsedMs);
+  const hasActiveIngestion = pendingJobs + processingJobs > 0;
+
+  return (
+    <div className={`rounded-2xl border p-4 ${evaluating ? "border-amber-500/25 bg-amber-500/5" : "border-white/5 bg-white/[0.015]"}`}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${evaluating ? "bg-amber-500/15 text-amber-300" : "bg-white/5 text-neutral-300"}`}>
+            {evaluating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Activity className="h-5 w-5" />}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-widest text-neutral-400">
+              {evaluating ? "Active RAG Evaluation Running" : "Active RAG Evaluation Ready"}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-white">
+              {evaluating ? phase.label : `${totalPlannedCases} planned checks against the active knowledge base`}
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+              {evaluating
+                ? phase.hint
+                : "Benchmark uses current Postgres chunks, retrieval/reranking, answer generation, verification, and LLM-as-judge scoring."}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
+          <EngineSignal icon={<HardDrive className="h-3.5 w-3.5" />} label="Chunks" value={activeChunks.toLocaleString()} tone={activeChunks > 0 ? "good" : "warn"} />
+          <EngineSignal icon={<FileText className="h-3.5 w-3.5" />} label="Sources" value={sourceDocuments.toLocaleString()} tone={sourceDocuments > 0 ? "good" : "warn"} />
+          <EngineSignal icon={<Search className="h-3.5 w-3.5" />} label="Cases" value={totalPlannedCases.toLocaleString()} tone="good" />
+          <EngineSignal icon={<Clock className="h-3.5 w-3.5" />} label={evaluating ? "Elapsed" : "Last Run"} value={evaluating ? formatDuration(elapsedMs) : formatLatestRun(engine)} tone={evaluating ? "warn" : "good"} />
+        </div>
+      </div>
+
+      {(evaluating || hasActiveIngestion) && (
+        <div className="mt-4 border-t border-white/5 pt-4">
+          {evaluating && (
+            <div>
+              <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                <span>{phase.label}</span>
+                <span>{Math.round(phase.progress)}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-amber-400 transition-all duration-500" style={{ width: `${phase.progress}%` }} />
+              </div>
+            </div>
+          )}
+
+          {hasActiveIngestion && (
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/15 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {pendingJobs} pending and {processingJobs} processing ingestion job(s). Evaluation uses only chunks already active in Postgres.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function EngineSignal({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: JSX.Element;
+  label: string;
+  value: string;
+  tone: "good" | "warn";
+}) {
+  return (
+    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+      <div className={`mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest ${tone === "good" ? "text-emerald-300" : "text-amber-300"}`}>
+        {icon}
+        {label}
+      </div>
+      <p className="truncate font-mono text-sm font-bold text-white">{value}</p>
+    </div>
+  );
+}
+
+function getEvaluationPhase(elapsedMs: number) {
+  const elapsedSeconds = elapsedMs / 1000;
+  if (elapsedSeconds < 5) {
+    return {
+      label: "Preparing synthetic cases",
+      hint: "Sampling active chunks and generating benchmark prompts.",
+      progress: Math.max(8, elapsedSeconds * 8),
+    };
+  }
+  if (elapsedSeconds < 25) {
+    return {
+      label: "Running retrieval and agent graph",
+      hint: "Classifying questions, retrieving chunks, reranking context, and generating grounded answers.",
+      progress: 40 + ((elapsedSeconds - 5) / 20) * 32,
+    };
+  }
+  if (elapsedSeconds < 50) {
+    return {
+      label: "Scoring with LLM judges",
+      hint: "Checking faithfulness, answer relevance, context precision, and safety routing.",
+      progress: 72 + ((elapsedSeconds - 25) / 25) * 20,
+    };
+  }
+  return {
+    label: "Finalizing report",
+    hint: "Saving the benchmark run and refreshing evaluation history.",
+    progress: 95,
+  };
+}
+
+function formatDuration(value: number) {
+  const totalSeconds = Math.max(0, Math.floor(value / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function formatLatestRun(engine: EvaluationEngineSnapshot | null) {
+  if (!engine?.latestRun) return "None";
+  return formatPercentage(engine.latestRun.overallScore);
 }
 
 // ── Stat Card Component ────────────────────────────────────────────────
@@ -884,4 +1199,119 @@ function EvalMetricCard({ label, val, highlighted }: { label: string; val: numbe
       </div>
     </div>
   );
+}
+
+function LatestEvaluationOperations({ details }: { details: unknown }) {
+  const report = getEvaluationReport(details);
+  if (!report) return null;
+
+  const { summary } = report;
+  return (
+    <div className="mt-5 border-t border-amber-500/15 pt-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-[10px] font-bold uppercase tracking-widest text-amber-300">Operational Signals</h3>
+        <span className="text-[10px] font-mono text-neutral-500">
+          {summary.totalCases} cases · {summary.staticCases} fixed · {summary.syntheticCases} synthetic
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <OperationalMetricCard label="Pass Rate" value={formatPercentage(summary.passRate)} hint={`${summary.passedCases}/${summary.totalCases} cases`} tone={summary.passRate >= 0.8 ? "good" : "warn"} />
+        <OperationalMetricCard label="Safety Routing" value={formatPercentage(summary.safetyAccuracy)} hint="medical classifier" tone={summary.safetyAccuracy === 1 ? "good" : "warn"} />
+        <OperationalMetricCard label="Retrieval Coverage" value={formatPercentage(summary.retrievalCoverage)} hint="medical cases with context" tone={summary.retrievalCoverage >= 0.9 ? "good" : "warn"} />
+        <OperationalMetricCard label="Avg / P95 Latency" value={`${formatLatency(summary.averageLatencyMs)} / ${formatLatency(summary.p95LatencyMs)}`} hint="end-to-end response" tone={summary.p95LatencyMs <= 12000 ? "good" : "warn"} />
+      </div>
+    </div>
+  );
+}
+
+function OperationalMetricCard({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: "good" | "warn";
+}) {
+  return (
+    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+      <p className="text-[9px] font-bold uppercase tracking-widest text-neutral-500">{label}</p>
+      <p className={`mt-1 text-lg font-bold font-mono ${tone === "good" ? "text-emerald-300" : "text-amber-300"}`}>{value}</p>
+      <p className="mt-1 text-[10px] text-neutral-600">{hint}</p>
+    </div>
+  );
+}
+
+function EvaluationRunDiagnostics({ details }: { details: unknown }) {
+  const report = getEvaluationReport(details);
+  if (!report) {
+    return (
+      <div>
+        <h4 className="mb-1 text-[9px] font-bold uppercase tracking-widest text-amber-400">Legacy Execution Output</h4>
+        <pre className="max-h-52 overflow-x-auto whitespace-pre-wrap rounded-lg border border-white/5 bg-black/60 p-3 font-mono text-[10px] leading-relaxed text-neutral-400">
+          {typeof details === "string" ? details : JSON.stringify(details, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wider">
+        <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-emerald-300">{report.summary.passedCases} passed</span>
+        <span className="rounded-full bg-red-500/10 px-2.5 py-1 text-red-300">{report.summary.failedCases} review</span>
+        <span className="rounded-full bg-blue-500/10 px-2.5 py-1 text-blue-300">{report.summary.syntheticCases} synthetic</span>
+      </div>
+      <div className="space-y-2">
+        {report.cases.map((item, index) => (
+          <div key={`${item.query}-${index}`} className={`rounded-lg border p-3 ${item.passed ? "border-emerald-500/15 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${item.passed ? "bg-emerald-500/15 text-emerald-300" : "bg-red-500/15 text-red-300"}`}>
+                    {item.passed ? "Pass" : "Review"}
+                  </span>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500">{item.source}</span>
+                  <span className="text-[9px] text-neutral-500">{item.retrievedChunkCount} chunks</span>
+                </div>
+                <p className="mt-2 font-semibold leading-relaxed text-neutral-200">{item.query}</p>
+                <p className="mt-1 text-[10px] text-neutral-500">Expected: {item.expectedTopic}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className={`font-mono text-sm font-bold ${item.passed ? "text-emerald-300" : "text-red-300"}`}>{formatPercentage(item.metrics.overall)}</p>
+                <p className="mt-1 text-[10px] font-mono text-neutral-500">{formatLatency(item.metrics.latencyMs)}</p>
+              </div>
+            </div>
+            {item.issues.length > 0 && (
+              <ul className="mt-2 space-y-1 border-t border-white/5 pt-2">
+                {item.issues.map((issue) => (
+                  <li key={issue} className="flex gap-2 text-[10px] leading-relaxed text-amber-200">
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                    {issue}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getEvaluationReport(details: unknown): EvaluationReport | null {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  const candidate = details as Partial<EvaluationReport>;
+  if (candidate.version !== 2 || !candidate.summary || !Array.isArray(candidate.cases)) return null;
+  return candidate as EvaluationReport;
+}
+
+function formatPercentage(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatLatency(value: number) {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
 }

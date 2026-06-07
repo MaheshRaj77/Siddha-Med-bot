@@ -1,21 +1,23 @@
 import Navbar from "@/components/landing/Navbar";
 import Hero from "@/components/landing/Hero";
-import MetricsStrip from "@/components/landing/MetricsStrip";
-import InteractiveMockup from "@/components/landing/InteractiveMockup";
-import FeatureCards from "@/components/landing/FeatureCards";
-import FAQSection from "@/components/landing/FAQSection";
+import PowerfulFeatures from "@/components/landing/PowerfulFeatures";
+import HowItWorks from "@/components/landing/HowItWorks";
+import TrustSection from "@/components/landing/TrustSection";
+import Testimonials from "@/components/landing/Testimonials";
+import PricingSection from "@/components/landing/PricingSection";
 import CTASection from "@/components/landing/CTASection";
 import Footer from "@/components/landing/Footer";
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen" style={{ background: "var(--bg-void)" }}>
+    <div className="min-h-screen bg-white text-gray-900 font-sans selection:bg-emerald-200">
       <Navbar />
       <Hero />
-      <MetricsStrip />
-      <InteractiveMockup />
-      <FeatureCards />
-      <FAQSection />
+      <PowerfulFeatures />
+      <HowItWorks />
+      <TrustSection />
+      <Testimonials />
+      <PricingSection />
       <CTASection />
       <Footer />
     </div>

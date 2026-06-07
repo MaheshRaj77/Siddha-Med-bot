@@ -1,10 +1,9 @@
-import { prisma } from "@/lib/db";
-import { NextResponse } from "next/server";
-import { exec } from "child_process";
-import { promisify } from "util";
+import { prisma } from "@/lib/server/db";
+import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-
-const execAsync = promisify(exec);
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { auditSecurityEvent, enforceSameOrigin, internalServerError } from "@/lib/server/security";
+import { runEvaluation } from "@/scripts/evaluate";
 
 // Helper to verify user is ADMIN or SUPER_ADMIN
 async function verifyAdminOrSuperAdmin() {
@@ -17,8 +16,34 @@ async function verifyAdminOrSuperAdmin() {
     where: { supabaseId: authUser.id },
   });
   
-  if (!user || (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN")) return null;
+  if (!user || !user.isActive || (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN")) return null;
   return user;
+}
+
+async function getEvaluationEngineSnapshot() {
+  const [activeChunks, sourceDocuments, activeJobs, latestRun] = await Promise.all([
+    prisma.documentChunk.count(),
+    prisma.documentMetadata.count(),
+    prisma.ingestionJob.groupBy({
+      by: ["status"],
+      where: { status: { in: ["PENDING", "PROCESSING"] } },
+      _count: { _all: true },
+    }),
+    prisma.evaluationRun.findFirst({
+      orderBy: { timestamp: "desc" },
+      select: { id: true, timestamp: true, overallScore: true },
+    }),
+  ]);
+
+  return {
+    activeChunks,
+    sourceDocuments,
+    pendingJobs: activeJobs.find((job) => job.status === "PENDING")?._count._all || 0,
+    processingJobs: activeJobs.find((job) => job.status === "PROCESSING")?._count._all || 0,
+    staticCases: 6,
+    syntheticSeedChunks: Math.min(activeChunks, 2),
+    latestRun,
+  };
 }
 
 export async function GET() {
@@ -28,60 +53,51 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
+    const rateLimitError = await enforceRateLimit("privileged", adminUser.id);
+    if (rateLimitError) return rateLimitError;
+
     const runs = await prisma.evaluationRun.findMany({
       orderBy: {
         timestamp: "desc",
       },
       take: 20,
     });
-    return NextResponse.json({ success: true, runs });
-  } catch (error: any) {
-    console.error("Failed to fetch evaluation runs:", error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+    const engine = await getEvaluationEngineSnapshot();
+    return NextResponse.json({ success: true, runs, engine });
+  } catch (error: unknown) {
+    return internalServerError("admin.evaluate.list", error);
   }
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
+    const originError = enforceSameOrigin(req);
+    if (originError) return originError;
+
     const adminUser = await verifyAdminOrSuperAdmin();
     if (!adminUser) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    // Run evaluation script using tsx
+    const rateLimitError = await enforceRateLimit("privileged", adminUser.id);
+    if (rateLimitError) return rateLimitError;
+
+    // Run the bundled evaluator directly so the standalone deployment works
+    // without relying on repository source files or an npx subprocess.
     console.log("Triggering on-demand RAG evaluation run...");
-    const cmd = "npx tsx src/scripts/evaluate.ts";
-    const { stdout, stderr } = await execAsync(cmd, {
-      env: {
-        ...process.env,
-        // Ensure DATABASE_URL and other credentials exist
-      },
-    });
-
-    console.log("Evaluation output:", stdout);
-    if (stderr) console.warn("Evaluation stderr:", stderr);
-
-    // Fetch the newly created evaluation run
-    const latestRun = await prisma.evaluationRun.findFirst({
-      orderBy: {
-        timestamp: "desc",
-      },
-    });
+    const startedAt = Date.now();
+    const latestRun = await runEvaluation();
+    const engine = await getEvaluationEngineSnapshot();
+    auditSecurityEvent("admin.evaluation.run", adminUser.id);
 
     return NextResponse.json({
       success: true,
       message: "Evaluation run completed successfully!",
       run: latestRun,
-      stdout,
+      engine,
+      durationMs: Date.now() - startedAt,
     });
-  } catch (error: any) {
-    console.error("Evaluation run failed:", error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return internalServerError("admin.evaluate.run", error);
   }
 }

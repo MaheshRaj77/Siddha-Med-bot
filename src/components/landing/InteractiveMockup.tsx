@@ -10,6 +10,8 @@ import {
   EXPO_OUT,
 } from "@/lib/constants";
 
+const MOTION_EASE: [number, number, number, number] = [...EXPO_OUT];
+
 /* ── Tab definitions ──────────────────────────────────────── */
 const TABS = [
   { id: "clinical", label: "01 · CLINICAL REPORT" },
@@ -487,7 +489,7 @@ export default function InteractiveMockup() {
         <motion.div
           initial={{ opacity: 0, y: 40 }}
           animate={inView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.7, ease: EXPO_OUT as any }}
+          transition={{ duration: 0.7, ease: MOTION_EASE }}
           className="text-center mb-16"
         >
           <span
@@ -514,7 +516,7 @@ export default function InteractiveMockup() {
         <motion.div
           initial={{ opacity: 0, y: 40 }}
           animate={inView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.7, delay: 0.15, ease: EXPO_OUT as any }}
+          transition={{ duration: 0.7, delay: 0.15, ease: MOTION_EASE }}
           className="overflow-hidden"
           style={{
             background: "#080808",
@@ -559,7 +561,7 @@ export default function InteractiveMockup() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.3, ease: EXPO_OUT as any }}
+              transition={{ duration: 0.3, ease: MOTION_EASE }}
             >
               {activeTab === "clinical" && <ClinicalReport />}
               {activeTab === "telemetry" && <Telemetry />}

@@ -1,135 +1,159 @@
 import { NextRequest } from "next/server";
-import { agentExecutor } from "@/lib/agent";
-import prisma from "@/lib/db";
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { agentExecutor, costOptimizedLlm } from "@/lib/rag/agent";
+import prisma from "@/lib/server/db";
+import { z } from "zod";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { authorize, enforceSameOrigin, internalServerError, logServerError, parseJson, uuidSchema } from "@/lib/server/security";
+import { resolveUserPlan } from "@/lib/billing/pricing-server";
+import { estimateAnswerCostMinor } from "@/lib/ai-cost";
+import { getMonthlyCreditAdjustment } from "@/lib/billing/credits";
 
-// Rate Limit logic using Upstash HTTP Redis (ideal for Serverless)
-let ratelimit: Ratelimit | null = null;
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  ratelimit = new Ratelimit({
-    redis: Redis.fromEnv(),
-    limiter: Ratelimit.slidingWindow(10, "1 m"),
-    analytics: true,
-  });
-}
+const chatSchema = z.object({
+  query: z.string().trim().min(1).max(2000),
+  originalQuery: z.string().trim().min(1).max(2000).optional(),
+  sessionId: uuidSchema.optional(),
+  clarificationAnswered: z.boolean().optional().default(false),
+}).strict();
+
+type RetrievedSource = {
+  pageContent: string;
+  metadata: {
+    source_file?: string;
+    loc?: { pageNumber?: number | string };
+    page?: number | string;
+  };
+};
+
+type AgentStateAccumulator = {
+  rerankedDocs?: RetrievedSource[];
+  generation?: string;
+  symptomsToAsk?: string[];
+  needsDoctor?: boolean;
+};
 
 export async function POST(req: NextRequest) {
   try {
-    const ip = req.headers.get("x-forwarded-for") || "127.0.0.1";
-    
-    // Apply rate limit if Upstash is configured
-    if (ratelimit) {
-      const { success } = await ratelimit.limit(`rate_limit:${ip}`);
-      if (!success) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Try again later." }),
-          { status: 429, headers: { "Content-Type": "application/json" } }
-        );
-      }
-    }
+    const originError = enforceSameOrigin(req);
+    if (originError) return originError;
 
-    // ── AUTH & PLAN RATE-LIMITING ──
-    const supabase = await createServerSupabaseClient();
-    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const auth = await authorize();
+    if (auth.response) return auth.response;
+    const dbUser = auth.user;
 
-    if (!authUser) {
+    const rateLimitError = await enforceRateLimit("chat", dbUser.id);
+    if (rateLimitError) return rateLimitError;
+
+    const parsed = await parseJson(req, chatSchema, 96 * 1024);
+    if (parsed.response) return parsed.response;
+    const { query, originalQuery, sessionId, clarificationAnswered } = parsed.data;
+    const determinedSessionId = sessionId || crypto.randomUUID();
+    const existingSession = sessionId
+      ? await prisma.chatSession.findUnique({ where: { id: sessionId } })
+      : null;
+
+    if (existingSession && (existingSession.userId !== dbUser.id || existingSession.isDeleted)) {
       return new Response(
-        JSON.stringify({ error: "Authentication required to access MedBot." }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
+        JSON.stringify({ error: "Unauthorized or session not found" }),
+        { status: 404, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    const dbUser = await prisma.user.findUnique({
-      where: { supabaseId: authUser.id },
-    });
-
-    if (!dbUser) {
-      return new Response(
-        JSON.stringify({ error: "User profile not found. Please log in again." }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!dbUser.isActive) {
-      return new Response(
-        JSON.stringify({ error: "Your account is deactivated. Contact your Super Admin." }),
-        { status: 403, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Fetch quota
-    const quota = await prisma.queryQuota.findUnique({
-      where: { role: dbUser.role },
-    });
-
-    const dailyLimit = quota?.dailyQueryLimit ?? (dbUser.role === "SUPER_ADMIN" ? 999999 : dbUser.role === "ADMIN" ? 100 : 10);
-    const monthlyLimit = quota?.monthlyQueryLimit ?? (dbUser.role === "SUPER_ADMIN" ? 999999 : dbUser.role === "ADMIN" ? 3000 : 300);
+    const plan = await resolveUserPlan(dbUser.planSlug);
+    const creditAdjustment = await getMonthlyCreditAdjustment(dbUser.id);
+    const dailyCreditLimit = dbUser.role === "SUPER_ADMIN" ? 999999 : plan.dailyQueryLimit;
+    const monthlyCreditLimit = dbUser.role === "SUPER_ADMIN" ? 999999 : Math.max(0, plan.monthlyQueryLimit + creditAdjustment);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Get today's usage
-    const todayUsage = await prisma.queryUsage.findUnique({
-      where: {
-        userId_date: {
-          userId: dbUser.id,
-          date: today,
-        },
-      },
-    });
-
-    if (todayUsage && todayUsage.count >= dailyLimit) {
-      return new Response(
-        JSON.stringify({ error: `Daily limit of ${dailyLimit} queries reached. Upgrade your plan or contact your administrator.` }),
-        { status: 429, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Get monthly usage
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const monthlyUsageAggregate = await prisma.queryUsage.aggregate({
-      where: {
-        userId: dbUser.id,
-        date: { gte: monthStart },
-      },
-      _sum: { count: true },
-    });
+    const creditsReserved = await prisma.$transaction(async (tx) => {
+      const [todayUsage, monthlyUsage] = await Promise.all([
+        tx.queryUsage.findUnique({
+          where: { userId_date: { userId: dbUser.id, date: today } },
+        }),
+        tx.queryUsage.aggregate({
+          where: { userId: dbUser.id, date: { gte: monthStart } },
+          _sum: { count: true },
+        }),
+      ]);
 
-    const monthlyCount = monthlyUsageAggregate._sum.count || 0;
-    if (monthlyCount >= monthlyLimit) {
+      if ((todayUsage?.count || 0) >= dailyCreditLimit) return false;
+      if ((monthlyUsage._sum.count || 0) >= monthlyCreditLimit) return false;
+
+      // One chat submission currently consumes one credit.
+      await tx.queryUsage.upsert({
+        where: { userId_date: { userId: dbUser.id, date: today } },
+        update: { count: { increment: 1 } },
+        create: { userId: dbUser.id, date: today, count: 1 },
+      });
+      return true;
+    }, { isolationLevel: "Serializable" });
+
+    if (!creditsReserved) {
       return new Response(
-        JSON.stringify({ error: `Monthly limit of ${monthlyLimit} queries reached. Contact your administrator.` }),
+        JSON.stringify({
+          error: "Credit balance reached. Upgrade your subscription or wait for your credits to reset.",
+          upgradeUrl: "/#pricing",
+          credits: { dailyLimit: dailyCreditLimit, monthlyLimit: monthlyCreditLimit },
+          quota: { dailyLimit: dailyCreditLimit, monthlyLimit: monthlyCreditLimit },
+        }),
         { status: 429, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    let { query, history = [], sessionId } = await req.json();
-    
-    // 1. Basic Validation
-    if (!query || typeof query !== 'string') {
-      return new Response(
-        JSON.stringify({ error: "Valid query string is required" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // 2. Sanitization & Length Guardrails
-    query = query.trim();
-    if (query.length > 2000) {
-      return new Response(
-        JSON.stringify({ error: "Query exceeds maximum length of 2000 characters." }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-    
     const sanitizedQuery = query.replace(/[<>]/g, '');
+    const sanitizedOriginalQuery = originalQuery?.replace(/[<>]/g, '');
     const startTime = Date.now();
     const chatLogId = crypto.randomUUID();
-    
-    // Format history
-    const historyStr = history.map((h: any) => `${h.role === 'user' ? 'User' : 'MedBot'}: ${h.content}`).join("\n");
+
+    if (!existingSession) {
+      const fallbackTitle = sanitizedQuery.length > 32 ? `${sanitizedQuery.slice(0, 32)}...` : sanitizedQuery;
+      await prisma.chatSession.create({
+        data: { id: determinedSessionId, userId: dbUser.id, title: fallbackTitle }
+      });
+
+      costOptimizedLlm.invoke(`Summarize this medical question into a short 2-4 word title. Respond ONLY with the title. Question: "${sanitizedQuery}"`).then(res => {
+        const sessionTitle = res.content.toString().replace(/["']/g, '').trim().slice(0, 80);
+        return prisma.chatSession.update({
+          where: { id: determinedSessionId },
+          data: { title: sessionTitle || fallbackTitle }
+        });
+      }).catch((error: unknown) => logServerError("chat.session_title", error));
+    }
+
+    const priorLogs = existingSession
+      ? await prisma.chatLog.findMany({
+          where: { sessionId: determinedSessionId, userId: dbUser.id },
+          orderBy: { timestamp: "desc" },
+          take: 10,
+          select: { query: true, answer: true },
+        })
+      : [];
+    const historyStr = priorLogs.reverse()
+      .map((log) => `User: ${log.query}\nMedBot: ${log.answer}`)
+      .join("\n");
+    const priorOriginalQuery = priorLogs.at(-1)?.query?.replace(/[<>]/g, '');
+    const effectiveOriginalQuery = sanitizedOriginalQuery || (clarificationAnswered ? priorOriginalQuery : undefined);
+    const agentInput = clarificationAnswered && effectiveOriginalQuery
+      ? `Original user question:\n${effectiveOriginalQuery}\n\nStructured follow-up answers:\n${sanitizedQuery}\n\nAnswer the original question using the follow-up answers.`
+      : sanitizedQuery;
+
+    await prisma.chatLog.create({
+      data: {
+        id: chatLogId,
+        query,
+        answer: "",
+        durationMs: 0,
+        retrievedDocs: [],
+        triageData: {
+          symptoms_to_ask: [],
+          needs_doctor: false,
+        },
+        sessionId: determinedSessionId,
+        userId: dbUser.id,
+      }
+    });
 
     // SSE encoder helper
     const encoder = new TextEncoder();
@@ -137,7 +161,7 @@ export async function POST(req: NextRequest) {
     // Create ReadableStream for SSE
     const stream = new ReadableStream({
       async start(controller) {
-        const sendEvent = (event: string, data: any) => {
+        const sendEvent = (event: string, data: unknown) => {
           controller.enqueue(
             encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
           );
@@ -147,31 +171,32 @@ export async function POST(req: NextRequest) {
           // Initialize streaming of events
           const eventStream = await agentExecutor.streamEvents(
             {
-              input: sanitizedQuery,
+              input: agentInput,
               history: historyStr,
               chatLogId,
+              clarificationAnswered,
             },
             { version: "v2" }
           );
 
           let isGenerating = false;
           let generatedText = "";
-          const stateAccumulator: any = {};
+          const stateAccumulator: AgentStateAccumulator = {};
 
           for await (const event of eventStream) {
             const eventType = event.event;
             const name = event.name;
 
             // Track active graph nodes
-            if (eventType === "on_chain_start" && ["medicalSafety", "retrieval", "reranking", "generator", "verification"].includes(name)) {
+            if (eventType === "on_chain_start" && ["medicalSafety", "clarification", "retrieval", "reranking", "generator", "verification"].includes(name)) {
               sendEvent("node_start", { node: name });
               if (name === "generator") {
                 isGenerating = true;
               }
             }
 
-            if (eventType === "on_chain_end" && ["medicalSafety", "retrieval", "reranking", "generator", "verification"].includes(name)) {
-              sendEvent("node_end", { node: name, output: event.data.output });
+            if (eventType === "on_chain_end" && ["medicalSafety", "clarification", "retrieval", "reranking", "generator", "verification"].includes(name)) {
+              sendEvent("node_end", { node: name });
               if (name === "generator") {
                 isGenerating = false;
               }
@@ -198,16 +223,16 @@ export async function POST(req: NextRequest) {
               where: { chatLogId },
               orderBy: { timestamp: "desc" }
             });
-          } catch (e) {
-            console.error("Error loading diagnostics for chat log:", e);
+          } catch (error: unknown) {
+            logServerError("chat.load_diagnostics", error);
           }
 
-          if (diagnosticsObj) {
+          if (diagnosticsObj && dbUser.role === "SUPER_ADMIN") {
             sendEvent("diagnostics", diagnosticsObj);
           }
 
           // Format sources
-          const sources = (stateAccumulator.rerankedDocs || []).map((doc: any) => ({
+          const sources = (stateAccumulator.rerankedDocs || []).map((doc) => ({
             file: doc.metadata.source_file || "Unknown Source",
             page: doc.metadata.loc?.pageNumber || doc.metadata.page || 1,
             text: doc.pageContent,
@@ -216,59 +241,45 @@ export async function POST(req: NextRequest) {
           // Final response answer payload
           const finalAnswer = stateAccumulator.generation || generatedText;
 
-          // Ensure valid ChatSession is registered in DB
-          const determinedSessionId = sessionId || (history.length > 0 ? history[0].content.slice(0, 20) : crypto.randomUUID());
-          try {
-            await prisma.chatSession.upsert({
-              where: { id: determinedSessionId },
-              update: {},
-              create: { 
-                id: determinedSessionId,
-                userId: dbUser.id,
-              }
-            });
-          } catch (sessionErr) {
-            console.error("Failed to upsert ChatSession:", sessionErr);
-          }
-
-          // Increment daily query count for this user
-          try {
-            await prisma.queryUsage.upsert({
-              where: {
-                userId_date: {
-                  userId: dbUser.id,
-                  date: today,
-                },
-              },
-              update: {
-                count: { increment: 1 },
-              },
-              create: {
-                userId: dbUser.id,
-                date: today,
-                count: 1,
-              },
-            });
-          } catch (usageErr) {
-            console.error("Failed to increment QueryUsage:", usageErr);
-          }
-
           // Save final chat interaction log linked to user
-          await prisma.chatLog.create({
+          await prisma.chatLog.update({
+            where: { id: chatLogId },
             data: {
-              id: chatLogId,
-              query,
               answer: finalAnswer,
               durationMs,
-              retrievedDocs: JSON.stringify(sources),
-              triageData: JSON.stringify({
+              retrievedDocs: sources,
+              triageData: {
                 symptoms_to_ask: stateAccumulator.symptomsToAsk || [],
                 needs_doctor: stateAccumulator.needsDoctor || false,
-              }),
-              sessionId: determinedSessionId,
-              userId: dbUser.id,
+              },
             }
           });
+
+          const contextForCost = (stateAccumulator.rerankedDocs || [])
+            .map((doc) => `${doc.metadata.source_file || "Unknown Source"}\n${doc.pageContent}`)
+            .join("\n\n");
+          const cost = estimateAnswerCostMinor({
+            promptText: `${historyStr}\n\n${agentInput}\n\n${contextForCost}`,
+            completionText: finalAnswer,
+          });
+          await prisma.chatCostMetric.upsert({
+            where: { chatLogId },
+            update: {
+              userId: dbUser.id,
+              planSlug: dbUser.planSlug,
+              model: "meta/llama-3.3-70b-instruct",
+              ...cost,
+              sourceCount: sources.length,
+            },
+            create: {
+              chatLogId,
+              userId: dbUser.id,
+              planSlug: dbUser.planSlug,
+              model: "meta/llama-3.3-70b-instruct",
+              ...cost,
+              sourceCount: sources.length,
+            },
+          }).catch((error: unknown) => logServerError("chat.cost_metric", error));
 
           // Stream final completion event
           sendEvent("done", {
@@ -280,9 +291,21 @@ export async function POST(req: NextRequest) {
           });
 
           controller.close();
-        } catch (err: any) {
-          console.error("SSE stream execution error:", err);
-          sendEvent("error", { message: err.message || "Failed to process stream" });
+        } catch (error: unknown) {
+          logServerError("chat.stream", error);
+          await prisma.chatLog.update({
+            where: { id: chatLogId },
+            data: {
+              answer: "An internal error occurred during chat generation.",
+              durationMs: Date.now() - startTime,
+              retrievedDocs: [],
+              triageData: {
+                symptoms_to_ask: [],
+                needs_doctor: false,
+              },
+            },
+          }).catch((updateError: unknown) => logServerError("chat.log_failure", updateError));
+          sendEvent("error", { message: "An internal error occurred during chat generation." });
           controller.close();
         }
       }
@@ -296,11 +319,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-  } catch (error: any) {
-    console.error("SSE Initialization Error:", error);
-    return new Response(
-      JSON.stringify({ error: error.message || "Failed to initialize stream" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+  } catch (error: unknown) {
+    return internalServerError("chat.init", error);
   }
 }

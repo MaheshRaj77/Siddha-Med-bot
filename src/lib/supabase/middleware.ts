@@ -3,11 +3,17 @@ import { NextResponse, type NextRequest } from "next/server";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
+  const useSecureCookies = process.env.NODE_ENV === "production"
+    && (process.env.APP_ORIGIN ? process.env.APP_ORIGIN.startsWith("https://") : true);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: {
+        sameSite: "lax",
+        secure: useSecureCookies,
+      },
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -50,7 +56,7 @@ export async function updateSession(request: NextRequest) {
 
   if (isAuth && user) {
     const url = request.nextUrl.clone();
-    url.pathname = "/chat";
+    url.pathname = "/auth/redirect";
     return NextResponse.redirect(url);
   }
 

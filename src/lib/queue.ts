@@ -1,4 +1,4 @@
-import { Queue, Worker, QueueEvents } from 'bullmq';
+import { Queue, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
 import { ingestDocument } from './langchain';
 import { prisma } from './db';
@@ -10,49 +10,45 @@ const connection = new IORedis(redisUrl, {
   maxRetriesPerRequest: null,
   // Upstash requires these for BullMQ compatibility
   enableReadyCheck: false,
-  ...(redisUrl.startsWith('rediss://') ? { tls: { rejectUnauthorized: false } } : {}),
+  ...(redisUrl.startsWith('rediss://') ? { tls: {} } : {}),
 });
 
 export const ingestionQueue = new Queue('ingestion', { connection });
 export const ingestionEvents = new QueueEvents('ingestion', { connection });
 
-// Initialize the worker ONLY if not in edge runtime, usually in a separate worker process 
-// but for Next.js MVP we can run it here (though true prod uses separate processes).
-if (typeof window === 'undefined' && process.env.ENABLE_WORKER === 'true') {
-  console.log('Starting BullMQ Ingestion Worker...');
-  const worker = new Worker('ingestion', async (job) => {
-    const { fileBuffer, fileName, fileType, jobId } = job.data;
-    
-    // Update job status
+export type IngestionPayload = {
+  fileBase64: string;
+  fileName: string;
+  fileType: string;
+  jobId: string;
+};
+
+export async function processIngestionPayload(payload: IngestionPayload) {
+  const { fileBase64, fileName, fileType, jobId } = payload;
+
+  await prisma.ingestionJob.update({
+    where: { id: jobId },
+    data: { status: 'PROCESSING', error: null }
+  });
+
+  try {
+    const chunksCount = await ingestDocument(Buffer.from(fileBase64, 'base64'), fileName, fileType);
+
     await prisma.ingestionJob.update({
       where: { id: jobId },
-      data: { status: 'PROCESSING' }
+      data: { status: 'COMPLETED', chunksCount, error: null }
     });
 
-    try {
-      const chunksCount = await ingestDocument(Buffer.from(fileBuffer), fileName, fileType);
-      
-      await prisma.ingestionJob.update({
-        where: { id: jobId },
-        data: { status: 'COMPLETED', chunksCount }
-      });
-
-      return chunksCount;
-    } catch (error: any) {
-      console.error(`Job ${job.id} failed:`, error);
-      await prisma.ingestionJob.update({
-        where: { id: jobId },
-        data: { status: 'FAILED', error: error.message }
-      });
-      throw error;
-    }
-  }, { connection });
-
-  worker.on('completed', job => {
-    console.log(`${job.id} has completed!`);
-  });
-
-  worker.on('failed', (job, err) => {
-    console.log(`${job?.id} has failed with ${err.message}`);
-  });
+    return chunksCount;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown ingestion error";
+    console.error(`Ingestion job ${jobId} failed:`, error);
+    await prisma.ingestionJob.update({
+      where: { id: jobId },
+      data: { status: 'FAILED', error: message }
+    });
+    throw error;
+  }
 }
+
+export { connection as ingestionRedisConnection };

@@ -1,10 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { getConfiguredOrigins, getHeaderDerivedOrigin, isHttpsOrigin } from "@/lib/request-origin";
 
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
+  const headerStore = await headers();
+  const configuredOrigin = getConfiguredOrigins()[0];
+  const requestOrigin = getHeaderDerivedOrigin(headerStore);
   const useSecureCookies = process.env.NODE_ENV === "production"
-    && (process.env.APP_ORIGIN ? process.env.APP_ORIGIN.startsWith("https://") : true);
+    && isHttpsOrigin(configuredOrigin || requestOrigin);
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

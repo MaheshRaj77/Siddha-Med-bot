@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import prisma from "@/lib/db";
 import type { Role, User } from "@prisma/client";
 import { ensureAppUser } from "@/lib/auth/user-sync";
+import { getConfiguredOrigins, getHeaderDerivedOrigin, normalizeOrigin } from "@/lib/request-origin";
 
 type AuthorizationResult =
   | { user: User; response?: never }
@@ -87,11 +88,13 @@ export function enforceSameOrigin(req: NextRequest): NextResponse | null {
 
   const suppliedOrigin = req.headers.get("origin");
   const referer = req.headers.get("referer");
-  const configuredOrigin = process.env.APP_ORIGIN;
-  if (process.env.NODE_ENV === "production" && !configuredOrigin) {
-    return error("Server origin is not configured", 503);
-  }
-  const expectedOrigin = configuredOrigin || req.nextUrl.origin;
+  const allowedOrigins = getConfiguredOrigins();
+  const requestOrigin = getHeaderDerivedOrigin(req.headers, req.nextUrl.origin);
+  const expectedOrigins = allowedOrigins.length > 0
+    ? allowedOrigins
+    : requestOrigin
+      ? [requestOrigin]
+      : [];
 
   let candidateOrigin: string | null = suppliedOrigin;
   if (!candidateOrigin && referer) {
@@ -107,7 +110,8 @@ export function enforceSameOrigin(req: NextRequest): NextResponse | null {
   }
 
   try {
-    if (new URL(candidateOrigin).origin !== new URL(expectedOrigin).origin) {
+    const normalizedCandidate = normalizeOrigin(candidateOrigin);
+    if (!normalizedCandidate || !expectedOrigins.includes(normalizedCandidate)) {
       return error("Cross-origin request rejected", 403);
     }
   } catch {

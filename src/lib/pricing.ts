@@ -41,7 +41,7 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
   },
   {
     slug: "student",
-    name: "Student",
+    name: "Plus",
     description: "Affordable access for BSMS students and exam-focused study.",
     currency: "INR",
     monthlyPriceMinor: 29900,
@@ -63,7 +63,7 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
   },
   {
     slug: "researcher",
-    name: "Researcher",
+    name: "Pro",
     description: "Higher limits for literature review, comparison, and deeper study.",
     currency: "INR",
     monthlyPriceMinor: 99900,
@@ -85,7 +85,7 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
   },
   {
     slug: "practitioner",
-    name: "Practitioner",
+    name: "Pro Max",
     description: "Professional access for practitioners who need frequent reference support.",
     currency: "INR",
     monthlyPriceMinor: 299900,
@@ -107,7 +107,7 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
   },
   {
     slug: "institution",
-    name: "Institution",
+    name: "Ultra",
     description: "Pooled access for colleges, clinics, libraries, and research teams.",
     currency: "INR",
     monthlyPriceMinor: 5000000,

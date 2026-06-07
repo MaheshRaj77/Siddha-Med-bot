@@ -1,10 +1,11 @@
 import { updateSession } from "@/lib/supabase/middleware";
+import { getConfiguredOrigins, getHeaderDerivedOrigin, isHttpsOrigin } from "@/lib/request-origin";
 import { type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
-  const isHttpsDeployment = process.env.APP_ORIGIN
-    ? process.env.APP_ORIGIN.startsWith("https://")
-    : request.nextUrl.protocol === "https:";
+  const configuredOrigin = getConfiguredOrigins()[0];
+  const requestOrigin = getHeaderDerivedOrigin(request.headers, request.nextUrl.origin);
+  const isHttpsDeployment = isHttpsOrigin(configuredOrigin || requestOrigin);
   const csp = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com",

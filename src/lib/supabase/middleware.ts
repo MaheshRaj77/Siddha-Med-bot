@@ -1,10 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getConfiguredOrigins, getHeaderDerivedOrigin, isHttpsOrigin } from "@/lib/request-origin";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
+  const configuredOrigin = getConfiguredOrigins()[0];
+  const requestOrigin = getHeaderDerivedOrigin(request.headers, request.nextUrl.origin);
   const useSecureCookies = process.env.NODE_ENV === "production"
-    && (process.env.APP_ORIGIN ? process.env.APP_ORIGIN.startsWith("https://") : true);
+    && isHttpsOrigin(configuredOrigin || requestOrigin);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

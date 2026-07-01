@@ -74,8 +74,7 @@ export async function POST(req: NextRequest) {
           billing: parsed.data.billing,
           promoCode: validPromo ? promoCode.code : undefined,
           amountMinor,
-          monthlyCredits: plan.monthlyQueryLimit,
-          dailyCredits: plan.dailyQueryLimit,
+          monthlyTokens: plan.monthlyTokenLimit,
         })
       : null;
     const useRazorpay = amountMinor > 0 && !providerCheckoutUrl;
@@ -93,6 +92,7 @@ export async function POST(req: NextRequest) {
         currency: plan.currency,
         monthlyPriceMinor: plan.monthlyPriceMinor,
         yearlyPriceMinor: plan.yearlyPriceMinor,
+        monthlyTokenLimit: plan.monthlyTokenLimit,
         dailyQueryLimit: plan.dailyQueryLimit,
         monthlyQueryLimit: plan.monthlyQueryLimit,
         maxFileUploads: plan.maxFileUploads,
@@ -135,10 +135,8 @@ export async function POST(req: NextRequest) {
           currentPeriodEnd: plan.isFree || amountMinor === 0 ? periodEnd : null,
           metadata: {
             closedKnowledgeBase: true,
-            creditBased: true,
-            dailyCredits: plan.dailyQueryLimit,
-            monthlyCredits: plan.monthlyQueryLimit,
-            creditCostPerChat: 1,
+            tokenBased: true,
+            monthlyTokenLimit: plan.monthlyTokenLimit,
             originalAmountMinor,
           },
         },
@@ -260,10 +258,8 @@ export async function POST(req: NextRequest) {
           code: promoCode.code,
           discountPercent: promoCode.discountPercent,
         } : null,
-        credits: {
-          daily: plan.dailyQueryLimit,
-          monthly: plan.monthlyQueryLimit,
-          costPerChat: 1,
+        tokens: {
+          monthlyTokenLimit: plan.monthlyTokenLimit,
         },
       },
     });
@@ -274,14 +270,13 @@ export async function POST(req: NextRequest) {
 
 function buildProviderUrl(
   checkoutUrl: string,
-  params: { planSlug: string; billing: string; promoCode?: string; amountMinor: number; monthlyCredits: number; dailyCredits: number }
+  params: { planSlug: string; billing: string; promoCode?: string; amountMinor: number; monthlyTokens: number }
 ) {
   const url = new URL(checkoutUrl);
   url.searchParams.set("plan", params.planSlug);
   url.searchParams.set("billing", params.billing);
   url.searchParams.set("amount", String(params.amountMinor));
-  url.searchParams.set("monthly_credits", String(params.monthlyCredits));
-  url.searchParams.set("daily_credits", String(params.dailyCredits));
+  url.searchParams.set("monthly_tokens", String(params.monthlyTokens));
   if (params.promoCode) url.searchParams.set("promo_code", params.promoCode);
   return url.toString();
 }

@@ -22,13 +22,13 @@ const updateUserSchema = z.object({
   isActive: z.boolean().optional(),
   password: strongPassword.optional(),
   planSlug: z.string().trim().min(2).max(40).regex(/^[a-z0-9-]+$/).optional(),
-  creditAdjustment: z.object({
-    amount: z.number().int().min(-1_000_000).max(1_000_000),
+  tokenAdjustment: z.object({
+    amount: z.number().int().min(-50_000_000).max(50_000_000),
     reason: z.string().trim().min(3).max(500),
   }).optional(),
 }).strict().refine(
-  ({ role, isActive, password, planSlug, creditAdjustment }) =>
-    role !== undefined || isActive !== undefined || password !== undefined || planSlug !== undefined || creditAdjustment !== undefined
+  ({ role, isActive, password, planSlug, tokenAdjustment }) =>
+    role !== undefined || isActive !== undefined || password !== undefined || planSlug !== undefined || tokenAdjustment !== undefined
 );
 
 const deleteUserSchema = z.object({ userId: uuidSchema }).strict();
@@ -65,28 +65,21 @@ export async function GET() {
       },
     });
 
-    // Get today's date for usage lookup
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const plans = mergePricingPlans(await prisma.pricingPlan.findMany());
 
     const usersWithUsage = await Promise.all(
       users.map(async (u) => {
-        const todayUsage = await prisma.queryUsage.findUnique({
-          where: { userId_date: { userId: u.id, date: today } },
-        });
-
         const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-        const monthlyUsage = await prisma.queryUsage.aggregate({
-          where: { userId: u.id, date: { gte: monthStart } },
-          _sum: { count: true },
+        const monthlyTokenUsage = await prisma.chatCostMetric.aggregate({
+          where: { userId: u.id, createdAt: { gte: monthStart } },
+          _sum: { totalTokens: true },
         });
         const plan = plans.find((candidate) => candidate.slug === u.planSlug);
-        const monthlyAdjustment = await getMonthlyCreditAdjustment(u.id, today);
-        const dailyCreditLimit = u.role === "SUPER_ADMIN" ? 999999 : plan?.dailyQueryLimit ?? 0;
-        const monthlyCreditLimit = u.role === "SUPER_ADMIN" ? 999999 : Math.max(0, (plan?.monthlyQueryLimit ?? 0) + monthlyAdjustment);
-        const todayUsed = todayUsage?.count || 0;
-        const monthlyUsed = monthlyUsage._sum.count || 0;
+        const monthlyTokenAdjustment = await getMonthlyCreditAdjustment(u.id, today);
+        const monthlyTokenLimit = u.role === "SUPER_ADMIN" ? 999_999_999 : Math.max(0, (plan?.monthlyTokenLimit ?? 0) + monthlyTokenAdjustment);
+        const monthlyTokensUsed = monthlyTokenUsage._sum.totalTokens || 0;
 
         return {
           id: u.id,
@@ -98,16 +91,11 @@ export async function GET() {
           createdAt: u.createdAt,
           totalQueries: u._count.chatLogs,
           totalSessions: u._count.sessions,
-          todayQueries: todayUsage?.count || 0,
-          monthlyQueries: monthlyUsage._sum.count || 0,
-          credits: {
-            dailyLimit: dailyCreditLimit,
-            monthlyLimit: monthlyCreditLimit,
-            monthlyAdjustment,
-            todayUsed,
-            monthlyUsed,
-            todayRemaining: dailyCreditLimit >= 999999 ? 999999 : Math.max(0, dailyCreditLimit - todayUsed),
-            monthlyRemaining: monthlyCreditLimit >= 999999 ? 999999 : Math.max(0, monthlyCreditLimit - monthlyUsed),
+          tokens: {
+            monthlyTokenLimit,
+            monthlyTokenAdjustment,
+            monthlyTokensUsed,
+            monthlyTokensRemaining: monthlyTokenLimit >= 999_999_999 ? 999_999_999 : Math.max(0, monthlyTokenLimit - monthlyTokensUsed),
           },
         };
       })
@@ -135,7 +123,7 @@ export async function PATCH(req: NextRequest) {
 
     const parsed = await parseJson(req, updateUserSchema);
     if (parsed.response) return parsed.response;
-    const { userId, role, isActive, password, planSlug, creditAdjustment } = parsed.data;
+    const { userId, role, isActive, password, planSlug, tokenAdjustment } = parsed.data;
 
     // Prevent self-demotion or self password change
     if (userId === admin.id) {
@@ -192,13 +180,13 @@ export async function PATCH(req: NextRequest) {
       data: updateData,
     });
 
-    if (creditAdjustment) {
+    if (tokenAdjustment) {
       await prisma.creditAdjustment.create({
         data: {
           userId,
           actorId: admin.id,
-          amount: creditAdjustment.amount,
-          reason: creditAdjustment.reason,
+          amount: tokenAdjustment.amount,
+          reason: tokenAdjustment.reason,
           periodStart: getCreditPeriodStart(),
         },
       });
@@ -210,7 +198,7 @@ export async function PATCH(req: NextRequest) {
       activeChanged: isActive !== undefined,
       passwordChanged: password !== undefined,
       planChanged: planSlug !== undefined,
-      creditsChanged: creditAdjustment !== undefined,
+      tokenAdjustmentChanged: tokenAdjustment !== undefined,
     });
 
     return NextResponse.json({

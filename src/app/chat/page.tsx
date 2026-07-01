@@ -412,7 +412,7 @@ type SourceRef = {
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
-  kind?: "normal" | "credits";
+  kind?: "normal" | "quota";
   upgradeUrl?: string;
   sources?: SourceRef[];
   symptoms_to_ask?: string[];
@@ -434,20 +434,16 @@ type UserProfile = {
     planName?: string;
   };
   quota: {
-    dailyLimit: number;
-    monthlyLimit: number;
+    monthlyTokenLimit: number;
   };
-  credits?: {
-    dailyLimit: number;
-    monthlyLimit: number;
-    todayUsed: number;
-    monthlyUsed: number;
-    todayRemaining: number;
-    monthlyRemaining: number;
+  tokens?: {
+    monthlyTokenLimit: number;
+    monthlyTokenAdjustment: number;
+    monthlyTokensUsed: number;
+    monthlyTokensRemaining: number;
   };
   usage: {
-    todayCount: number;
-    monthlyCount: number;
+    monthlyTokensUsed: number;
   };
 };
 
@@ -635,40 +631,37 @@ function usagePercent(count: number, limit: number) {
 }
 
 function UsageCounter({ profile }: { profile: UserProfile }) {
-  const credits = profile.credits || {
-    dailyLimit: profile.quota.dailyLimit,
-    monthlyLimit: profile.quota.monthlyLimit,
-    todayUsed: profile.usage.todayCount,
-    monthlyUsed: profile.usage.monthlyCount,
-    todayRemaining: Math.max(0, profile.quota.dailyLimit - profile.usage.todayCount),
-    monthlyRemaining: Math.max(0, profile.quota.monthlyLimit - profile.usage.monthlyCount),
+  const tokens = profile.tokens || {
+    monthlyTokenLimit: profile.quota.monthlyTokenLimit,
+    monthlyTokenAdjustment: 0,
+    monthlyTokensUsed: profile.usage.monthlyTokensUsed,
+    monthlyTokensRemaining: Math.max(0, profile.quota.monthlyTokenLimit - profile.usage.monthlyTokensUsed),
   };
-  const dailyPercent = usagePercent(credits.todayUsed, credits.dailyLimit);
-  const monthlyPercent = usagePercent(credits.monthlyUsed, credits.monthlyLimit);
+  const monthlyPercent = usagePercent(tokens.monthlyTokensUsed, tokens.monthlyTokenLimit);
 
   return (
     <div className="hidden min-w-[188px] rounded-xl border border-[var(--app-border)] bg-[var(--app-soft)] px-3 py-2 sm:block">
       <div className="flex items-center justify-between gap-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--app-faint)]">
         <span>{profile.user.planName || "Current Plan"}</span>
-        <span>{formatLimit(credits.monthlyRemaining)} left</span>
+        <span>{formatLimit(tokens.monthlyTokensRemaining)} left</span>
       </div>
       <div className="mt-2 space-y-1.5">
         <div className="h-1.5 overflow-hidden rounded-full bg-[var(--app-border)]">
           <div className="h-full rounded-full bg-[#0B8B73]" style={{ width: `${monthlyPercent}%` }} />
         </div>
         <div className="flex justify-between text-[11px] text-[var(--app-muted)]">
-          <span>{credits.monthlyUsed.toLocaleString("en-IN")} credits used</span>
-          <span>{formatLimit(credits.dailyLimit)} daily</span>
+          <span>{tokens.monthlyTokensUsed.toLocaleString("en-IN")} tokens used</span>
+          <span>{formatLimit(tokens.monthlyTokenLimit)} limit</span>
         </div>
       </div>
-      {dailyPercent >= 80 && credits.dailyLimit < 999999 && (
-        <p className="mt-1 text-[10px] font-medium text-amber-500">{dailyPercent}% of today&apos;s credits used</p>
+      {monthlyPercent >= 80 && tokens.monthlyTokenLimit < 999_999_999 && (
+        <p className="mt-1 text-[10px] font-medium text-amber-500">{monthlyPercent}% of monthly tokens used</p>
       )}
     </div>
   );
 }
 
-function CreditUpgradeMessage({ message, upgradeUrl }: { message: string; upgradeUrl?: string }) {
+function QuotaUpgradeMessage({ message, upgradeUrl }: { message: string; upgradeUrl?: string }) {
   return (
     <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-[var(--app-text)]">
       <div className="flex items-start gap-3">
@@ -676,7 +669,7 @@ function CreditUpgradeMessage({ message, upgradeUrl }: { message: string; upgrad
           <AlertTriangle className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-[var(--app-text)]">Credits exhausted</p>
+          <p className="text-sm font-semibold text-[var(--app-text)]">Monthly tokens exhausted</p>
           <p className="mt-1 text-sm leading-6 text-[var(--app-muted)]">{message}</p>
           <Link
             href={upgradeUrl || "/#pricing"}
@@ -739,13 +732,11 @@ export default function Home() {
   const visibleSessions = sessions.filter((session) =>
     session.title.toLowerCase().includes(deferredSessionSearch.trim().toLowerCase())
   );
-  const currentCredits = userProfile?.credits || (userProfile ? {
-    dailyLimit: userProfile.quota.dailyLimit,
-    monthlyLimit: userProfile.quota.monthlyLimit,
-    todayUsed: userProfile.usage.todayCount,
-    monthlyUsed: userProfile.usage.monthlyCount,
-    todayRemaining: Math.max(0, userProfile.quota.dailyLimit - userProfile.usage.todayCount),
-    monthlyRemaining: Math.max(0, userProfile.quota.monthlyLimit - userProfile.usage.monthlyCount),
+  const currentTokens = userProfile?.tokens || (userProfile ? {
+    monthlyTokenLimit: userProfile.quota.monthlyTokenLimit,
+    monthlyTokenAdjustment: 0,
+    monthlyTokensUsed: userProfile.usage.monthlyTokensUsed,
+    monthlyTokensRemaining: Math.max(0, userProfile.quota.monthlyTokenLimit - userProfile.usage.monthlyTokensUsed),
   } : null);
 
   const fetchUserProfile = async () => {
@@ -963,17 +954,17 @@ export default function Home() {
       if (!response.ok) {
         const errorData = await response.json();
         if (response.status === 429) {
-          const creditMessage = errorData.error || "Your credits have ended for this plan.";
+          const creditMessage = errorData.error || "Your monthly tokens have ended for this plan.";
           setMessages(prev => [
             ...prev,
             {
               role: "assistant",
               content: creditMessage,
-              kind: "credits",
+              kind: "quota",
               upgradeUrl: typeof errorData.upgradeUrl === "string" ? errorData.upgradeUrl : "/#pricing",
             },
           ]);
-          showToast("Your current plan credits are finished.", "error");
+          showToast("Your current plan tokens are finished.", "error");
           return;
         }
         throw new Error(errorData.error || "Failed to fetch response");
@@ -1279,16 +1270,10 @@ export default function Home() {
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--app-faint)]">
                   {userProfile.user.role === "SUPER_ADMIN" ? "Super Admin" : userProfile.user.role === "ADMIN" ? "Doctor / Admin" : "Researcher"}
                 </p>
-                <div className="mt-2 flex items-center justify-between text-xs text-[var(--app-muted)]">
-                  <span>Daily credits</span>
-                  <span className="font-semibold text-[var(--app-text)]">
-                    {currentCredits?.dailyLimit === 999999 ? "Unlimited" : `${currentCredits?.todayRemaining ?? 0} left`}
-                  </span>
-                </div>
                 <div className="mt-1.5 flex items-center justify-between text-xs text-[var(--app-muted)]">
-                  <span>Monthly credits</span>
+                  <span>Monthly tokens</span>
                   <span className="font-semibold text-[var(--app-text)]">
-                    {currentCredits?.monthlyLimit === 999999 ? "Unlimited" : `${currentCredits?.monthlyRemaining ?? 0} left`}
+                    {currentTokens?.monthlyTokenLimit === 999_999_999 ? "Unlimited" : `${currentTokens?.monthlyTokensRemaining.toLocaleString("en-IN") ?? 0} left`}
                   </span>
                 </div>
               </div>
@@ -1391,8 +1376,8 @@ export default function Home() {
                             <ProgressiveAgentLogger steps={agentSteps} elapsedMs={agentElapsedMs} />
                           )}
 
-                          {msg.kind === "credits" ? (
-                            <CreditUpgradeMessage message={msg.content} upgradeUrl={msg.upgradeUrl} />
+                          {msg.kind === "quota" ? (
+                            <QuotaUpgradeMessage message={msg.content} upgradeUrl={msg.upgradeUrl} />
                           ) : (
                             <StructuredMedicalReport text={msg.content} />
                           )}

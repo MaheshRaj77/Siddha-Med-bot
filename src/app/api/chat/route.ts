@@ -59,44 +59,31 @@ export async function POST(req: NextRequest) {
     }
 
     const plan = await resolveUserPlan(dbUser.planSlug);
-    const creditAdjustment = await getMonthlyCreditAdjustment(dbUser.id);
-    const dailyCreditLimit = dbUser.role === "SUPER_ADMIN" ? 999999 : plan.dailyQueryLimit;
-    const monthlyCreditLimit = dbUser.role === "SUPER_ADMIN" ? 999999 : Math.max(0, plan.monthlyQueryLimit + creditAdjustment);
+    const tokenAdjustment = await getMonthlyCreditAdjustment(dbUser.id);
+    const monthlyTokenLimit = dbUser.role === "SUPER_ADMIN" ? 999_999_999 : Math.max(0, plan.monthlyTokenLimit + tokenAdjustment);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const creditsReserved = await prisma.$transaction(async (tx) => {
-      const [todayUsage, monthlyUsage] = await Promise.all([
-        tx.queryUsage.findUnique({
-          where: { userId_date: { userId: dbUser.id, date: today } },
-        }),
-        tx.queryUsage.aggregate({
-          where: { userId: dbUser.id, date: { gte: monthStart } },
-          _sum: { count: true },
-        }),
-      ]);
+    const monthlyTokenUsage = await prisma.chatCostMetric.aggregate({
+      where: { userId: dbUser.id, createdAt: { gte: monthStart } },
+      _sum: { totalTokens: true },
+    });
+    const monthlyTokensUsed = monthlyTokenUsage._sum.totalTokens || 0;
 
-      if ((todayUsage?.count || 0) >= dailyCreditLimit) return false;
-      if ((monthlyUsage._sum.count || 0) >= monthlyCreditLimit) return false;
-
-      // One chat submission currently consumes one credit.
-      await tx.queryUsage.upsert({
-        where: { userId_date: { userId: dbUser.id, date: today } },
-        update: { count: { increment: 1 } },
-        create: { userId: dbUser.id, date: today, count: 1 },
-      });
-      return true;
-    }, { isolationLevel: "Serializable" });
-
-    if (!creditsReserved) {
+    if (monthlyTokensUsed >= monthlyTokenLimit) {
       return new Response(
         JSON.stringify({
-          error: "Credit balance reached. Upgrade your subscription or wait for your credits to reset.",
+          error: "Monthly token limit reached. Upgrade your subscription or wait for your tokens to reset.",
           upgradeUrl: "/#pricing",
-          credits: { dailyLimit: dailyCreditLimit, monthlyLimit: monthlyCreditLimit },
-          quota: { dailyLimit: dailyCreditLimit, monthlyLimit: monthlyCreditLimit },
+          tokens: {
+            monthlyTokenLimit,
+            monthlyTokensUsed,
+            monthlyTokensRemaining: 0,
+            monthlyTokenAdjustment: dbUser.role === "SUPER_ADMIN" ? 0 : tokenAdjustment,
+          },
+          quota: { monthlyTokenLimit },
         }),
         { status: 429, headers: { "Content-Type": "application/json" } }
       );

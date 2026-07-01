@@ -38,13 +38,12 @@ export async function GET() {
       prisma.user.count({ where: { isActive: true } }),
       prisma.user.count({ where: { role: "ADMIN" } }),
       prisma.chatLog.count(),
-      prisma.queryUsage.aggregate({
+      prisma.chatLog.count({
         where: {
-          date: {
+          timestamp: {
             gte: new Date(new Date().setHours(0, 0, 0, 0)),
           },
         },
-        _sum: { count: true },
       }),
       prisma.paymentTransaction.aggregate({
         where: { status: "PAID" },
@@ -61,16 +60,19 @@ export async function GET() {
       }).catch(() => ({ _sum: { amountMinor: 0 } })),
     ]);
 
-    // Get queries per day for last 7 days
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     weekAgo.setHours(0, 0, 0, 0);
 
-    const weeklyUsage = await prisma.queryUsage.groupBy({
-      by: ["date"],
-      where: { date: { gte: weekAgo } },
-      _sum: { count: true },
-      orderBy: { date: "asc" },
+    const weeklyLogs = await prisma.chatLog.findMany({
+      where: { timestamp: { gte: weekAgo } },
+      select: { timestamp: true },
+      orderBy: { timestamp: "asc" },
+    });
+    const weeklyUsage = new Map<string, number>();
+    weeklyLogs.forEach((log) => {
+      const key = log.timestamp.toISOString().slice(0, 10);
+      weeklyUsage.set(key, (weeklyUsage.get(key) || 0) + 1);
     });
 
     // Role distribution
@@ -101,7 +103,7 @@ export async function GET() {
       activeUsers,
       adminCount,
       totalQueries,
-      todayQueries: todayQueries._sum.count || 0,
+      todayQueries,
       revenue: {
         paidAmountMinor: revenueMinor,
         pendingAmountMinor: pendingRevenue._sum.amountMinor || 0,
@@ -125,9 +127,9 @@ export async function GET() {
           };
         }),
       },
-      weeklyUsage: weeklyUsage.map((w) => ({
-        date: w.date,
-        count: w._sum.count || 0,
+      weeklyUsage: Array.from(weeklyUsage.entries()).map(([date, count]) => ({
+        date,
+        count,
       })),
       roleDistribution: roleDistribution.map((r) => ({
         role: r.role,

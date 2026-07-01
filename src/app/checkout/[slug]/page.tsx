@@ -44,6 +44,9 @@ export default async function CheckoutPage({
               <span className="text-5xl font-black tracking-[-0.07em]">{formatPrice(price, plan.currency)}</span>
               {!plan.isFree && <span className="pb-1 text-sm font-bold text-emerald-100">/{yearly ? "year" : "month"}</span>}
             </div>
+            <div className="mt-5 inline-flex rounded-full border border-emerald-200/30 bg-white/10 px-4 py-2 text-xs font-bold text-emerald-50">
+              {plan.monthlyTokenLimit.toLocaleString("en-IN")} monthly tokens
+            </div>
             <ul className="mt-8 space-y-3">
               {plan.features.map((feature) => (
                 <li key={feature} className="flex gap-2.5 text-sm text-emerald-50">

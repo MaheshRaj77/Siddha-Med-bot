@@ -66,8 +66,7 @@ export default function PricingSection() {
                   {!plan.isFree && <span className="pb-1 text-xs font-bold text-slate-500">/{yearly ? "year" : "month"}</span>}
                 </div>
                 <div className="mt-6 grid gap-2 rounded-2xl bg-slate-50 p-3 text-xs font-bold text-slate-700">
-                  <span>{plan.monthlyQueryLimit.toLocaleString("en-IN")} monthly credits</span>
-                  <span>{plan.dailyQueryLimit.toLocaleString("en-IN")} daily credit fair use</span>
+                  <span>{plan.monthlyTokenLimit.toLocaleString("en-IN")} monthly tokens</span>
                 </div>
                 <ul className="mt-6 flex-1 space-y-3">
                   {plan.features.map((feature) => (

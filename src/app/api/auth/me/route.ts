@@ -26,10 +26,10 @@ export async function GET() {
     }
 
     const plan = await resolveUserPlan(user.planSlug);
-    const creditAdjustment = await getMonthlyCreditAdjustment(user.id);
-    const monthlyCreditLimit = user.role === "SUPER_ADMIN"
-      ? 999999
-      : Math.max(0, plan.monthlyQueryLimit + creditAdjustment);
+    const tokenAdjustment = await getMonthlyCreditAdjustment(user.id);
+    const monthlyTokenLimit = user.role === "SUPER_ADMIN"
+      ? 999_999_999
+      : Math.max(0, plan.monthlyTokenLimit + tokenAdjustment);
     const subscription = await prisma.billingSubscription.findFirst({
       where: {
         userId: user.id,
@@ -51,34 +51,21 @@ export async function GET() {
       return null;
     });
 
-    // Get today's credit usage. One chat submission currently consumes one credit.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const usage = await prisma.queryUsage.findUnique({
-      where: {
-        userId_date: {
-          userId: user.id,
-          date: today,
-        },
-      },
-    }).catch((error: unknown) => {
-      console.warn("Credit usage table is unavailable; continuing with zero daily usage.", error);
-      return null;
-    });
-
-    // Get this month's credit usage
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const monthlyUsage = await prisma.queryUsage.aggregate({
+    const monthlyTokenUsage = await prisma.chatCostMetric.aggregate({
       where: {
         userId: user.id,
-        date: { gte: monthStart },
+        createdAt: { gte: monthStart },
       },
-      _sum: { count: true },
+      _sum: { totalTokens: true },
     }).catch((error: unknown) => {
-      console.warn("Credit usage table is unavailable; continuing with zero monthly usage.", error);
-      return { _sum: { count: 0 } };
+      console.warn("Token usage table is unavailable; continuing with zero monthly usage.", error);
+      return { _sum: { totalTokens: 0 } };
     });
+    const monthlyTokensUsed = monthlyTokenUsage._sum.totalTokens || 0;
 
     return NextResponse.json({
       user: {
@@ -91,22 +78,17 @@ export async function GET() {
         isActive: user.isActive,
         createdAt: user.createdAt,
       },
-      credits: {
-        dailyLimit: user.role === "SUPER_ADMIN" ? 999999 : plan.dailyQueryLimit,
-        monthlyLimit: monthlyCreditLimit,
-        monthlyAdjustment: user.role === "SUPER_ADMIN" ? 0 : creditAdjustment,
-        todayUsed: usage?.count || 0,
-        monthlyUsed: monthlyUsage._sum.count || 0,
-        todayRemaining: user.role === "SUPER_ADMIN" ? 999999 : Math.max(0, plan.dailyQueryLimit - (usage?.count || 0)),
-        monthlyRemaining: user.role === "SUPER_ADMIN" ? 999999 : Math.max(0, monthlyCreditLimit - (monthlyUsage._sum.count || 0)),
+      tokens: {
+        monthlyTokenLimit,
+        monthlyTokenAdjustment: user.role === "SUPER_ADMIN" ? 0 : tokenAdjustment,
+        monthlyTokensUsed,
+        monthlyTokensRemaining: user.role === "SUPER_ADMIN" ? 999_999_999 : Math.max(0, monthlyTokenLimit - monthlyTokensUsed),
       },
       quota: {
-        dailyLimit: user.role === "SUPER_ADMIN" ? 999999 : plan.dailyQueryLimit,
-        monthlyLimit: monthlyCreditLimit,
+        monthlyTokenLimit,
       },
       usage: {
-        todayCount: usage?.count || 0,
-        monthlyCount: monthlyUsage._sum.count || 0,
+        monthlyTokensUsed,
       },
       subscription,
     });

@@ -27,16 +27,11 @@ interface UserRow {
   createdAt: string;
   totalQueries: number;
   totalSessions: number;
-  todayQueries: number;
-  monthlyQueries: number;
-  credits?: {
-    dailyLimit: number;
-    monthlyLimit: number;
-    monthlyAdjustment: number;
-    todayUsed: number;
-    monthlyUsed: number;
-    todayRemaining: number;
-    monthlyRemaining: number;
+  tokens?: {
+    monthlyTokenLimit: number;
+    monthlyTokenAdjustment: number;
+    monthlyTokensUsed: number;
+    monthlyTokensRemaining: number;
   };
 }
 
@@ -261,7 +256,7 @@ export default function SuperAdminPage() {
   const [evaluationEngine, setEvaluationEngine] = useState<EvaluationEngineSnapshot | null>(null);
   const [resettingPasswordId, setResettingPasswordId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
-  const [creditDrafts, setCreditDrafts] = useState<Record<string, { amount: string; reason: string }>>({});
+  const [tokenDrafts, setTokenDrafts] = useState<Record<string, { amount: string; reason: string }>>({});
 
   const showToast = (msg: string, type: "success" | "error") => {
     setToast({ msg, type });
@@ -476,15 +471,15 @@ export default function SuperAdminPage() {
     }
   };
 
-  const handleCreditAdjustment = async (userId: string) => {
-    const draft = creditDrafts[userId] || { amount: "", reason: "" };
+  const handleTokenAdjustment = async (userId: string) => {
+    const draft = tokenDrafts[userId] || { amount: "", reason: "" };
     const amount = Number(draft.amount);
     if (!Number.isInteger(amount) || amount === 0) {
-      showToast("Enter a non-zero whole-number credit adjustment", "error");
+      showToast("Enter a non-zero whole-number token adjustment", "error");
       return;
     }
     if (draft.reason.trim().length < 3) {
-      showToast("Add a short reason for the credit change", "error");
+      showToast("Add a short reason for the token change", "error");
       return;
     }
 
@@ -494,7 +489,7 @@ export default function SuperAdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId,
-          creditAdjustment: {
+          tokenAdjustment: {
             amount,
             reason: draft.reason.trim(),
           },
@@ -502,11 +497,11 @@ export default function SuperAdminPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setCreditDrafts((current) => ({ ...current, [userId]: { amount: "", reason: "" } }));
-      showToast("Credits adjusted for this month", "success");
+      setTokenDrafts((current) => ({ ...current, [userId]: { amount: "", reason: "" } }));
+      showToast("Tokens adjusted for this month", "success");
       await fetchUsers();
     } catch (e: unknown) {
-      showToast(e instanceof Error ? e.message : "Failed to adjust credits", "error");
+      showToast(e instanceof Error ? e.message : "Failed to adjust tokens", "error");
     }
   };
 
@@ -1011,11 +1006,10 @@ export default function SuperAdminPage() {
                           <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>{u.email}</p>
                           <div className="flex flex-wrap gap-x-6 gap-y-2 mt-3">
                             <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Plan: <strong style={{ color: "var(--gold-primary)" }}>{pricingPlans.find((plan) => plan.slug === u.planSlug)?.name || u.planSlug}</strong></span>
-                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Today: <strong style={{ color: "var(--gold-primary)" }}>{u.todayQueries}</strong></span>
-                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Monthly: <strong style={{ color: "var(--gold-primary)" }}>{u.monthlyQueries}</strong></span>
-                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Credits left: <strong style={{ color: "var(--gold-primary)" }}>{u.credits?.monthlyRemaining ?? "—"}</strong></span>
-                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Manual adj: <strong style={{ color: "var(--text-primary)" }}>{u.credits?.monthlyAdjustment ?? 0}</strong></span>
-                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Total: <strong style={{ color: "var(--text-primary)" }}>{u.totalQueries}</strong></span>
+                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Tokens used: <strong style={{ color: "var(--gold-primary)" }}>{u.tokens?.monthlyTokensUsed.toLocaleString("en-IN") ?? "—"}</strong></span>
+                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Tokens left: <strong style={{ color: "var(--gold-primary)" }}>{u.tokens?.monthlyTokensRemaining.toLocaleString("en-IN") ?? "—"}</strong></span>
+                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Manual adj: <strong style={{ color: "var(--text-primary)" }}>{u.tokens?.monthlyTokenAdjustment.toLocaleString("en-IN") ?? 0}</strong></span>
+                            <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Total chats: <strong style={{ color: "var(--text-primary)" }}>{u.totalQueries}</strong></span>
                           </div>
                         </div>
 
@@ -1033,22 +1027,22 @@ export default function SuperAdminPage() {
 
                             <input
                               type="number"
-                              placeholder="+/- credits"
-                              value={creditDrafts[u.id]?.amount || ""}
-                              onChange={(e) => setCreditDrafts((current) => ({ ...current, [u.id]: { amount: e.target.value, reason: current[u.id]?.reason || "" } }))}
+                              placeholder="+/- tokens"
+                              value={tokenDrafts[u.id]?.amount || ""}
+                              onChange={(e) => setTokenDrafts((current) => ({ ...current, [u.id]: { amount: e.target.value, reason: current[u.id]?.reason || "" } }))}
                               className="w-24 px-2 py-2 text-[11px] outline-none"
                               style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
                             />
                             <input
                               type="text"
                               placeholder="Reason"
-                              value={creditDrafts[u.id]?.reason || ""}
-                              onChange={(e) => setCreditDrafts((current) => ({ ...current, [u.id]: { amount: current[u.id]?.amount || "", reason: e.target.value } }))}
+                              value={tokenDrafts[u.id]?.reason || ""}
+                              onChange={(e) => setTokenDrafts((current) => ({ ...current, [u.id]: { amount: current[u.id]?.amount || "", reason: e.target.value } }))}
                               className="w-32 px-2 py-2 text-[11px] outline-none"
                               style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)", borderRadius: 2 }}
                             />
                             <button
-                              onClick={() => handleCreditAdjustment(u.id)}
+                              onClick={() => handleTokenAdjustment(u.id)}
                               className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.08em]"
                               style={{ color: "var(--gold-primary)", border: "1px solid rgba(201,168,76,0.28)", borderRadius: 2 }}
                             >
@@ -1134,7 +1128,7 @@ export default function SuperAdminPage() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
             <div>
               <h2 className="text-[14px] font-bold" style={{ color: "var(--text-primary)" }}>Plans, Limits & Payment Configuration</h2>
-              <p className="text-[12px] mt-1" style={{ color: "var(--text-tertiary)" }}>Closed-knowledge subscription plans for the existing Siddha resource base. Each plan controls public pricing, enforced credit balances, features, and secure provider handoff URL.</p>
+              <p className="text-[12px] mt-1" style={{ color: "var(--text-tertiary)" }}>Closed-knowledge subscription plans for the existing Siddha resource base. Each plan controls public pricing, enforced monthly token limits, features, and secure provider handoff URL.</p>
             </div>
 
             <div className="space-y-5">
@@ -1145,11 +1139,10 @@ export default function SuperAdminPage() {
                       <h3 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>{plan.name}</h3>
                       <p className="mt-1 text-[11px] font-mono" style={{ color: "var(--gold-dim)" }}>/{plan.slug}</p>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-4" style={{ color: "var(--text-secondary)" }}>
+                    <div className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-3" style={{ color: "var(--text-secondary)" }}>
                       <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{formatMinor(plan.monthlyPriceMinor, plan.currency)} / month</span>
                       <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{formatMinor(plan.yearlyPriceMinor, plan.currency)} / year</span>
-                      <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{plan.monthlyQueryLimit.toLocaleString("en-IN")} monthly credits</span>
-                      <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{plan.dailyQueryLimit.toLocaleString("en-IN")} daily credit fair use</span>
+                      <span className="border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>{plan.monthlyTokenLimit.toLocaleString("en-IN")} monthly tokens</span>
                     </div>
                     <div className="flex flex-wrap gap-4 text-[11px]" style={{ color: "var(--text-secondary)" }}>
                       <PricingCheckbox label="Published" checked={plan.isPublished} onChange={(checked) => updatePricingPlan(plan.slug, { isPublished: checked })} />
@@ -1163,8 +1156,7 @@ export default function SuperAdminPage() {
                     <PricingField label="Currency" value={plan.currency} onChange={(value) => updatePricingPlan(plan.slug, { currency: value })} />
                     <PricingField label="Monthly Price (minor unit)" type="number" value={plan.monthlyPriceMinor} onChange={(value) => updatePricingPlan(plan.slug, { monthlyPriceMinor: Number(value) || 0 })} />
                     <PricingField label="Yearly Price (minor unit)" type="number" value={plan.yearlyPriceMinor} onChange={(value) => updatePricingPlan(plan.slug, { yearlyPriceMinor: Number(value) || 0 })} />
-                    <PricingField label="Daily Credits" type="number" value={plan.dailyQueryLimit} onChange={(value) => updatePricingPlan(plan.slug, { dailyQueryLimit: Number(value) || 0 })} />
-                    <PricingField label="Monthly Credits" type="number" value={plan.monthlyQueryLimit} onChange={(value) => updatePricingPlan(plan.slug, { monthlyQueryLimit: Number(value) || 0 })} />
+                    <PricingField label="Monthly Tokens" type="number" value={plan.monthlyTokenLimit} onChange={(value) => updatePricingPlan(plan.slug, { monthlyTokenLimit: Number(value) || 0 })} />
                     <PricingField label="Display Order" type="number" value={plan.displayOrder} onChange={(value) => updatePricingPlan(plan.slug, { displayOrder: Number(value) || 0 })} />
                   </div>
 
@@ -1273,14 +1265,15 @@ export default function SuperAdminPage() {
                   <button
                     type="button"
                     role="switch"
+                    aria-label="Toggle follow-up questions"
                     aria-checked={agentSettings.followUpQuestionsEnabled}
                     onClick={() => updateAgentSetting("followUpQuestionsEnabled", !agentSettings.followUpQuestionsEnabled)}
                     className="relative h-7 w-12 shrink-0 rounded-full transition-colors"
                     style={{ background: agentSettings.followUpQuestionsEnabled ? "var(--gold-primary)" : "rgba(148,163,184,0.28)" }}
                   >
                     <span
-                      className="absolute top-1 h-5 w-5 rounded-full bg-black transition-transform"
-                      style={{ transform: agentSettings.followUpQuestionsEnabled ? "translateX(22px)" : "translateX(4px)" }}
+                      className="absolute left-1 top-1 h-5 w-5 rounded-full bg-black transition-transform"
+                      style={{ transform: agentSettings.followUpQuestionsEnabled ? "translateX(20px)" : "translateX(0)" }}
                     />
                   </button>
                 </div>

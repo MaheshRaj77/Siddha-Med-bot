@@ -5,6 +5,7 @@ export type PublicPricingPlan = {
   currency: string;
   monthlyPriceMinor: number;
   yearlyPriceMinor: number;
+  monthlyTokenLimit: number;
   dailyQueryLimit: number;
   monthlyQueryLimit: number;
   maxFileUploads: number;
@@ -24,11 +25,12 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
     currency: "INR",
     monthlyPriceMinor: 0,
     yearlyPriceMinor: 0,
+    monthlyTokenLimit: 50_000,
     dailyQueryLimit: 5,
     monthlyQueryLimit: 50,
     maxFileUploads: 0,
     features: [
-      "50 credits per month",
+      "50,000 tokens per month",
       "Curated Siddha knowledge base",
       "Saved conversation history",
       "Medical safety triage",
@@ -46,11 +48,12 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
     currency: "INR",
     monthlyPriceMinor: 29900,
     yearlyPriceMinor: 299900,
+    monthlyTokenLimit: 300_000,
     dailyQueryLimit: 25,
     monthlyQueryLimit: 300,
     maxFileUploads: 0,
     features: [
-      "300 credits per month",
+      "300,000 tokens per month",
       "Student-friendly Siddha explanations",
       "Citation-backed answers from internal resources",
       "Saved conversation history",
@@ -68,11 +71,12 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
     currency: "INR",
     monthlyPriceMinor: 99900,
     yearlyPriceMinor: 999900,
+    monthlyTokenLimit: 1_200_000,
     dailyQueryLimit: 60,
     monthlyQueryLimit: 1200,
     maxFileUploads: 0,
     features: [
-      "1,200 credits per month",
+      "1,200,000 tokens per month",
       "Research-oriented source tracing",
       "Follow-up questions for incomplete cases",
       "Saved conversation history",
@@ -90,11 +94,12 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
     currency: "INR",
     monthlyPriceMinor: 299900,
     yearlyPriceMinor: 2999900,
+    monthlyTokenLimit: 3_500_000,
     dailyQueryLimit: 150,
     monthlyQueryLimit: 3500,
     maxFileUploads: 0,
     features: [
-      "3,500 credits per month",
+      "3,500,000 tokens per month",
       "Practitioner-grade source review",
       "Higher-volume clinical research support",
       "Priority access to new curated resources",
@@ -112,11 +117,12 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
     currency: "INR",
     monthlyPriceMinor: 5000000,
     yearlyPriceMinor: 50000000,
+    monthlyTokenLimit: 50_000_000,
     dailyQueryLimit: 1000,
     monthlyQueryLimit: 50000,
     maxFileUploads: 0,
     features: [
-      "50,000 pooled credits per month",
+      "50,000,000 pooled tokens per month",
       "Multi-seat institutional access",
       "Onboarding and usage review",
       "Custom commercial terms",
@@ -129,11 +135,15 @@ export const DEFAULT_PRICING_PLANS: PublicPricingPlan[] = [
   },
 ];
 
-export function normalizePricingPlan(
-  plan: Omit<PublicPricingPlan, "features"> & { features: unknown }
-): PublicPricingPlan {
+type StoredPricingPlan = Omit<PublicPricingPlan, "features" | "monthlyTokenLimit"> & {
+  features: unknown;
+  monthlyTokenLimit?: number | null;
+};
+
+export function normalizePricingPlan(plan: StoredPricingPlan): PublicPricingPlan {
   return {
     ...plan,
+    monthlyTokenLimit: plan.monthlyTokenLimit ?? plan.monthlyQueryLimit * 1000,
     features: Array.isArray(plan.features)
       ? plan.features.filter((feature): feature is string => typeof feature === "string")
       : [],
@@ -141,7 +151,7 @@ export function normalizePricingPlan(
 }
 
 export function mergePricingPlans(
-  plans: Array<Omit<PublicPricingPlan, "features"> & { features: unknown }>
+  plans: StoredPricingPlan[]
 ) {
   const storedPlans = plans.map(normalizePricingPlan);
   const storedSlugs = new Set(storedPlans.map((plan) => plan.slug));
@@ -165,7 +175,7 @@ export function formatPrice(priceMinor: number, currency: string) {
 }
 
 export function findPricingPlan(
-  plans: Array<Omit<PublicPricingPlan, "features"> & { features: unknown }>,
+  plans: StoredPricingPlan[],
   slug: string
 ) {
   return mergePricingPlans(plans).find((plan) => plan.slug === slug)

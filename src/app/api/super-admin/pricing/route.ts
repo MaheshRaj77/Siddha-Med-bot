@@ -23,8 +23,9 @@ const pricingPlanSchema = z.object({
   currency: z.enum(["INR", "USD"]),
   monthlyPriceMinor: z.number().int().min(0).max(100_000_000),
   yearlyPriceMinor: z.number().int().min(0).max(1_000_000_000),
-  dailyQueryLimit: z.number().int().min(0).max(1_000_000),
-  monthlyQueryLimit: z.number().int().min(0).max(10_000_000),
+  monthlyTokenLimit: z.number().int().min(0).max(1_000_000_000),
+  dailyQueryLimit: z.number().int().min(0).max(1_000_000).optional(),
+  monthlyQueryLimit: z.number().int().min(0).max(10_000_000).optional(),
   maxFileUploads: z.number().int().min(0).max(100_000),
   features: z.array(z.string().trim().min(2).max(160)).min(1).max(12),
   checkoutUrl: httpsUrl.nullable(),
@@ -72,10 +73,14 @@ export async function PUT(req: NextRequest) {
       where: { slug: parsed.data.slug },
       update: {
         ...parsed.data,
+        dailyQueryLimit: parsed.data.dailyQueryLimit ?? 0,
+        monthlyQueryLimit: parsed.data.monthlyQueryLimit ?? Math.ceil(parsed.data.monthlyTokenLimit / 1000),
         checkoutUrl: parsed.data.checkoutUrl || null,
       },
       create: {
         ...parsed.data,
+        dailyQueryLimit: parsed.data.dailyQueryLimit ?? 0,
+        monthlyQueryLimit: parsed.data.monthlyQueryLimit ?? Math.ceil(parsed.data.monthlyTokenLimit / 1000),
         checkoutUrl: parsed.data.checkoutUrl || null,
       },
     });

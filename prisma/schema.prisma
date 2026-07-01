@@ -259,6 +259,7 @@ model PricingPlan {
   yearlyPriceMinor  Int      @default(0)
   dailyQueryLimit   Int      @default(10)
   monthlyQueryLimit Int      @default(300)
+  monthlyTokenLimit Int      @default(300000)
   maxFileUploads    Int      @default(0)
   features          Json
   checkoutUrl       String?
